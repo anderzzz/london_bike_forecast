@@ -54,29 +54,13 @@ class Time1dConvGLU(SpatioTemporal):
         '''Forward operation'''
 
         total = []
-        print (x.shape)
         for k_node, tensor_node in enumerate(x.split(1, dim=IDX_SPATIAL)):
-            print (tensor_node.shape)
             pq_out = self.one_d_conv_1(tensor_node)
             y_conv_and_gated_out = F.glu(pq_out, dim=1)
             total.append(y_conv_and_gated_out)
 
         nodes_times_nonnorm = torch.cat(total, dim=IDX_SPATIAL)
-        print (nodes_times_nonnorm)
-        print (nodes_times_nonnorm.shape)
-
-        print (self.permute_norm)
-        print (nodes_times_nonnorm.permute(self.permute_norm).shape)
         nodes_times_norm = self.layer_norm(nodes_times_nonnorm.permute(self.permute_norm)).permute(self.permute_norm)
-        print (nodes_times_norm)
-        print (nodes_times_norm.shape)
-
-        # Layer normalization. Each output channel is normalized with distinct parameters, mean and std obtained
-        # over the plurality of nodes and time steps the channel processes. Due to how dimensions of tensor
-        # may be ordered, a permutation of dimensions may be required.
-        #nodes_times_norm = F.layer_norm(nodes_times_nonnorm.permute(self.dim_permute_norm),
-        #                                [nodes_times_nonnorm.shape[self.dim_node],
-        #                                 nodes_times_nonnorm.shape[self.dim_timestep]]).permute(self.dim_permute_norm)
 
         return nodes_times_norm
 
@@ -102,19 +86,7 @@ class SpatialGraphConv(SpatioTemporal):
             total.append(y_t)
 
         nodes_times_nonnorm = torch.stack(total, dim=IDX_TEMPORAL)
-        print (nodes_times_nonnorm.shape)
-
         nodes_times_norm = self.layer_norm(nodes_times_nonnorm.permute(self.permute_norm)).permute(self.permute_norm)
-        print (nodes_times_norm)
-        print (nodes_times_norm.shape)
-
-        # Layer normalization. Each output channel is normalized with distinct parameters, mean and std obtained
-        # over the plurality of nodes and time steps the channel processes. Due to how dimensions of tensor
-        # may be ordered, a permutation of dimensions may be required.
-#        nodes_times_norm = F.layer_norm(nodes_times_nonnorm.permute(self.dim_permute_norm),
-#                                        [nodes_times_nonnorm.shape[self.dim_node],
-#                                         nodes_times_nonnorm.shape[self.dim_timestep]]).permute(self.dim_permute_norm)
-#        print (nodes_times_norm.shape)
 
         return nodes_times_norm
 
@@ -123,11 +95,11 @@ def construct_data():
     edge_index = torch.tensor([[0, 1, 1, 2, 2, 3, 2, 4],
                                [1, 0, 2, 1, 3, 2, 4, 2]], dtype=torch.long)
     edge_weight = None
-    x = torch.tensor([[[1,1,4,1,6],[20,20,70,10,70]],
-                      [[2,3,0,1,0],[50,50,60,10,10]],
-                      [[3,2,2,8,9],[40,40,30,40,40]],
-                      [[5,4,3,3,2],[50,40,40,50,80]],
-                      [[9,0,9,2,8],[60,70,70,20,20]]], dtype=torch.float)
+    x = torch.tensor([[[1,1,4,1,6,2,3,4,5],[20,20,70,10,70,80,20,10,20]],
+                      [[2,3,0,1,0,3,2,6,0],[50,50,60,10,10,20,10,10,10]],
+                      [[3,2,2,8,9,8,8,9,6],[40,40,30,40,40,50,30,40,30]],
+                      [[5,4,3,3,2,9,1,1,1],[50,40,40,50,80,40,50,20,40]],
+                      [[9,0,9,2,8,3,2,9,0],[60,70,70,20,20,60,60,60,60]]], dtype=torch.float)
 #    x = torch.tensor([[[1, 15], [2, 12], [3, 22], [0, 14], [1, 19]],
 #                      [[2, 10], [4, 10], [6, 25], [3, 20], [6, 24]],
 #                      [[3, 19], [7, 30], [5, 28], [1, 21], [1, 26]],
@@ -142,27 +114,63 @@ def main():
     data_step_0 = construct_data()
     edge_index = data_step_0.edge_index
     edge_attr = data_step_0.edge_attr
+    n_spatial_data = data_step_0.x.shape[IDX_SPATIAL]
+    n_temporal_data = data_step_0.x.shape[IDX_TEMPORAL]
+    n_channel_data = data_step_0.x.shape[IDX_CHANNEL]
 
-    model_t1 = Time1dConvGLU(n_spatial=5, n_temporal=5,
-                             channel_inputs=2, channel_outputs=4,
-                             time_convolution_length=3)
-    model_s = SpatialGraphConv(n_spatial=5, n_temporal=3,
-                               channel_inputs=4, channel_outputs=2)
-    model_t2 = Time1dConvGLU(n_spatial=5, n_temporal=3,
-                             channel_inputs=2, channel_outputs=2,
-                             time_convolution_length=3)
+    c_t_1a, c_s_1, c_t_1b = 64, 16, 64
+    c_t_2a, c_s_2, c_t_2b = 64, 16, 64
+    time_conv_length = 3
 
-    print ('AA1')
-    print (data_step_0.x.shape)
-    data_step_1_x = model_t1(data_step_0.x)
-    data_step_1 = Data(x=data_step_1_x, edge_index=edge_index, edge_attr=edge_attr)
+    assert n_temporal_data - 4 * time_conv_length + 4 == 1
 
-    print ('AA2')
-    data_step_2_x = model_s(data_step_1)
-    print ('AA3')
-    data_step_3_x = model_t2(data_step_2_x)
-    print ('AA4')
-    print (data_step_3_x.shape)
+    model_t_1a = Time1dConvGLU(n_spatial_data, n_temporal_data,
+                               channel_inputs=n_channel_data,
+                               channel_outputs=c_t_1a,
+                               time_convolution_length=time_conv_length)
+    model_s_1 = SpatialGraphConv(n_spatial_data, n_temporal_data - time_conv_length + 1,
+                                 channel_inputs=c_t_1a,
+                                 channel_outputs=c_s_1)
+    model_t_1b = Time1dConvGLU(n_spatial_data, n_temporal_data - time_conv_length + 1,
+                               channel_inputs=c_s_1,
+                               channel_outputs=c_t_1b,
+                               time_convolution_length=time_conv_length)
+
+    model_t_2a = Time1dConvGLU(n_spatial_data, n_temporal_data - 2 * time_conv_length + 2,
+                               channel_inputs=c_t_1b,
+                               channel_outputs=c_t_2a,
+                               time_convolution_length=time_conv_length)
+    model_s_2 = SpatialGraphConv(n_spatial_data, n_temporal_data - 3 * time_conv_length + 3,
+                                 channel_inputs=c_t_2a,
+                                 channel_outputs=c_s_2)
+    model_t_2b = Time1dConvGLU(n_spatial_data, n_temporal_data - 3 * time_conv_length + 3,
+                               channel_inputs=c_s_2,
+                               channel_outputs=c_t_2b,
+                               time_convolution_length=time_conv_length)
+
+    model_output = torch.nn.Sequential(torch.nn.Linear(in_features=n_spatial_data * c_t_2b,
+                                                       out_features=n_spatial_data * c_t_2b),
+                                       torch.nn.ReLU(),
+                                       torch.nn.Linear(in_features=n_spatial_data * c_t_2b,
+                                                       out_features=n_spatial_data * n_channel_data))
+
+    data_step_0_x = data_step_0.x
+    data_step_1_x = model_t_1a(data_step_0_x)
+    data_step_1 = Data(data_step_1_x, edge_index, edge_attr)
+    data_step_2_x = model_s_1(data_step_1)
+    data_step_3_x = model_t_1b(data_step_2_x)
+
+    data_step_4_x = model_t_2a(data_step_3_x)
+    data_step_4 = Data(data_step_4_x, edge_index, edge_attr)
+    data_step_5_x = model_s_2(data_step_4)
+    data_step_6_x = model_t_2b(data_step_5_x)
+
+    data_output_x = model_output(data_step_6_x.reshape(n_spatial_data * c_t_2b))
+    data_output_x = data_output_x.reshape(n_spatial_data, n_channel_data)
+    data_output = Data(data_output_x, edge_index, edge_attr)
+
+#    print (data_output.x)
+    print (data_output.x.shape)
 
 if __name__ == '__main__':
     main()
