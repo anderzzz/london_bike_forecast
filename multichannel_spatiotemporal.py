@@ -27,6 +27,7 @@ class Time1dConvGLU(torch.nn.Module):
         self.dim_node = dim_node
         self.dim_channels_input = dim_channels_input
         self.dim_timestep = dim_timestep
+        self.dim_permute_norm = (self.dim_channels_input, self.dim_node, self.dim_timestep)
 
         self.one_d_conv_1 = torch.nn.Conv1d(in_channels=self.channel_inputs,
                                             out_channels=2 * self.channel_outputs,
@@ -42,9 +43,16 @@ class Time1dConvGLU(torch.nn.Module):
             y_conv_and_gated_out = F.glu(pq_out, dim=1)
             total.append(y_conv_and_gated_out)
 
-        ret_tensor = torch.cat(total, dim=self.dim_node)
+        nodes_times_nonnorm = torch.cat(total, dim=self.dim_node)
 
-        return ret_tensor
+        # Layer normalization. Each output channel is normalized with distinct parameters, mean and std obtained
+        # over the plurality of nodes and time steps the channel processes. Due to how dimensions of tensor
+        # may be ordered, a permutation of dimensions may be required.
+        nodes_times_norm = F.layer_norm(nodes_times_nonnorm.permute(self.dim_permute_norm),
+                                        [nodes_times_nonnorm.shape[self.dim_node],
+                                         nodes_times_nonnorm.shape[self.dim_timestep]]).permute(self.dim_permute_norm)
+
+        return nodes_times_norm
 
 class SpatialGraphConv(torch.nn.Module):
 
@@ -61,11 +69,6 @@ class SpatialGraphConv(torch.nn.Module):
         self.dim_channels_input = dim_channels_input
         self.dim_timestep = dim_timestep
 
-#        gcns = []
-#        for i in range(self.channel_inputs):
-#            for j in range(self.channel_inputs):
-#                gcns.append(GCNConv(64, 16))
-#        self.gcn_convs = torch.nn.ModuleList(gcns)
         self.gcn = GCNConv(self.channel_inputs, self.channel_outputs)
 
     def forward(self, data):
@@ -77,6 +80,7 @@ class SpatialGraphConv(torch.nn.Module):
         for k_t in range(data.x.shape[self.dim_timestep]):
             x_t = x_s[:,:,k_t]
             y_t = self.gcn(x_t, data.edge_index, data.edge_attr)
+            y_t = F.relu(y_t)
             total.append(y_t)
 
         ret_tensor = torch.stack(total, dim=self.dim_timestep)
@@ -112,7 +116,6 @@ def main():
 
     data_step_2_x = model_s(data_step_1)
     data_step_3_x = model_t2(data_step_2_x)
-
     print (data_step_3_x.shape)
 
 if __name__ == '__main__':
