@@ -1,18 +1,5 @@
-import requests
-import json
-from requests.auth import HTTPBasicAuth
-
 import pandas as pd
-from datetime import datetime
-from datetime import timedelta
-
-api_url_base = 'https://api.tfl.gov.uk/bikepoint'
-id = '???'
-passwd = '???'
-
-def request_london():
-    xx = requests.get(api_url_base, auth=HTTPBasicAuth(id, passwd))
-    json.dump(open('test.json', 'w'), xx.json[0])
+from datetime import datetime, time, timedelta
 
 def make_time_interval(start_date, end_date, interval_size):
 
@@ -40,41 +27,111 @@ def make_time_interval(start_date, end_date, interval_size):
 
 def massage_data_file(file_path, tinterval, interval_size):
 
-    def _match_interval(s, ti):
-        xx = ti.loc[ti['t_lower'] <= s]
-        yy = xx.loc[xx['t_upper'] > s]
-        return yy['t_interval_id'].tolist()[0]
+    def round_minutes(dt, direction, resolution):
+        new_minute = (dt.minute // resolution + (1 if direction == 'up' else 0)) * resolution
+        return dt + timedelta(minutes=new_minute - dt.minute)
 
+    # Read raw data and ensure the date string is of datetime type
     df_raw = pd.read_csv(file_path, index_col=0)
     df_raw['End Date'] = pd.to_datetime(df_raw['End Date'], dayfirst=True)
     df_raw['Start Date'] = pd.to_datetime(df_raw['Start Date'], dayfirst=True)
 
-    date0 = df_raw['End Date'].tolist()[0]
-    date0_id = _match_interval(date0, tinterval)
-    date_low = tinterval.loc[tinterval['t_interval_id'] == date0_id]['t_lower'].tolist()[0]
+    # Map time of bike event to a lower bound of the defined time bins
+    df_raw['End Date Lower Bound'] = df_raw['End Date'].apply(round_minutes, **{'direction': 'down', 'resolution': interval_size})
+    df_raw['Start Date Lower Bound'] = df_raw['Start Date'].apply(round_minutes, **{'direction': 'down', 'resolution': interval_size})
 
-    id_val = date0_id
-    date_val = date_low
-    for k, row in df_raw['End Date'].iteritems():
-        td = row - date_val
-        if td > timedelta(minutes=interval_size):
-            id_val += 1
-            date_val += timedelta(minutes=interval_size)
-        print (id_val, td, row)
+    # Associate the lower bound of time bin to time interval id and count non-zero occurrences of station and
+    # time bin id for both bike arrivals and bike departures
+    xx = pd.merge(df_raw, tinterval, left_on='End Date Lower Bound', right_on='t_lower').drop(columns=['t_lower', 't_upper'])
+    xx = xx.rename({'t_interval_id' : 'End Date ID'}, axis=1)
+    xx = pd.merge(xx, tinterval, left_on='Start Date Lower Bound', right_on='t_lower').drop(columns=['t_lower', 't_upper'])
+    xx = xx.rename({'t_interval_id' : 'Start Date ID'}, axis=1)
+    xx = xx.drop(columns=['Bike Id', 'Duration',
+                          'End Date', 'EndStation Name',
+                          'Start Date', 'StartStation Name',
+                          'End Date Lower Bound', 'Start Date Lower Bound'])
+    g_arrival = xx.groupby(by=['EndStation Id', 'End Date ID'])
+    df_arrival = g_arrival.size()
+    g_departure = xx.groupby(by=['StartStation Id', 'Start Date ID'])
+    df_departure = g_departure.size()
+
+    # Insert zero occurrences
+    max_ind_1 = df_arrival.index.max()
+    max_ind_2 = df_departure.index.max()
+    max_station = int(max(max_ind_1[0], max_ind_2[0]))
+    max_timeid = int(max(max_ind_1[1], max_ind_2[1]))
+    min_ind_1 = df_arrival.index.min()
+    min_ind_2 = df_departure.index.min()
+    min_station = int(min(min_ind_1[0], min_ind_2[0]))
+    min_timeid = int(min(min_ind_1[1], min_ind_2[1]))
+    new_index = pd.MultiIndex.from_product([list(range(min_station, max_station + 1)),
+                                            list(range(min_timeid, max_timeid + 1))],
+                                           names=['station_id', 'time_id'])
+    df_arrival = pd.DataFrame(df_arrival.reindex(new_index, fill_value=0), columns=['arrivals'])
+    df_departure = pd.DataFrame(df_departure.reindex(new_index, fill_value=0), columns=['departures'])
+
+    df_all = df_arrival.join(df_departure, how='outer')
+
+    return df_all
+
+def merge_data(file_name_root, max_file_index):
+
+    for ind in range(max_file_index):
+        df = pd.read_csv('{}_{}.csv'.format(file_name_root, ind), index_col=(0, 1))
+        for ind_ in range(ind + 1, max_file_index):
+            print (ind, ind_)
+            df_ = pd.read_csv('{}_{}.csv'.format(file_name_root, ind_), index_col=(0, 1))
+
+            ss = df.join(df_, how='inner', lsuffix='_0', rsuffix='_1')
+            if len(ss) > 0:
+                print (ss)
+                ss['arrivals'] = ss['arrivals_0'] + ss['arrivals_1']
+                ss['departures'] = ss['departures_0'] + ss['departures_1']
+                raise RuntimeError
+
     raise RuntimeError
 
-    df_raw['End_Date_TID'] = df_raw['End Date'].apply(_match_interval, **{'ti': tinterval})
-    df_raw['Start_Date_TID'] = df_raw['Start Date'].apply(_match_interval, **{'ti': tinterval})
-    print (df_raw)
-    print (df_raw.columns)
-    print (df_raw.to_csv('ppp.csv'))
+def main(raw_data_file_paths, time_interval_size, lower_t_bound, upper_t_bound):
 
-def main():
-    tinterval = make_time_interval('2015/01/01', '2016/01/01', 10)
-    tinterval.to_csv('tinterval.csv')
-    tinterval_tmp = tinterval.loc[tinterval['t_lower'] > datetime(2015,9,19)]
-    tinterval_tmp = tinterval_tmp.loc[tinterval_tmp['t_lower'] < datetime(2015,10,5)]
-    massage_data_file('10a Journey Data Extract 20Sep15-03Oct15.csv', tinterval_tmp, 10)
+    # Create a time interval id mapping to real-world times
+    tinterval = make_time_interval(lower_t_bound, upper_t_bound, time_interval_size)
+    tinterval.to_csv('tinterval.csv', index=False)
+
+    # Reformat a collection of raw data files
+#    for k, file_path in enumerate(raw_data_file_paths):
+#        print (file_path)
+#        spatiotemp_ = massage_data_file(file_path, tinterval, time_interval_size)
+#        spatiotemp_.to_csv('data_reformat_{}.csv'.format(k))
+
+    # Deal with duplicate indices in adjacent files
+    k = 26
+    print (k)
+    merge_data('data_reformat', k)
 
 if __name__ == '__main__':
-    main()
+
+    # File paths to raw data files
+    FPS2015 = ['9a-Journey-Data-Extract-23Aug15-05Sep15.csv', '11b Journey Data Extract 01Nov15-14Nov15.csv',
+     '5a.JourneyDataExtract03May15-16May15.csv', '3a.JourneyDataExtract01Mar15-15Mar15.csv',
+     '10b Journey Data Extract 04Oct15-17Oct15.csv', '9b-Journey-Data-Extract-06Sep15-19Sep15.csv',
+     '4a.JourneyDataExtract01Apr15-16Apr15.csv', '2a.JourneyDataExtract01Feb15-14Feb15.csv',
+     '7b.JourneyDataExtract12Jul15-25Jul15.csv', '11a Journey Data Extract 18Oct15-31Oct15.csv',
+     '6bJourneyDataExtract13Jun15-27Jun15.csv', '6aJourneyDataExtract31May15-12Jun15.csv',
+     '8aJourneyDataExtract26Jul15-07Aug15.csv', '1b.JourneyDataExtract18Jan15-31Jan15.csv',
+     '12a Journey Data Extract 15Nov15-27Nov15.csv', '3b.JourneyDataExtract16Mar15-31Mar15.csv',
+     '7a.JourneyDataExtract28Jun15-11Jul15.csv', '1a.JourneyDataExtract04Jan15-17Jan15.csv',
+     '8bJourneyData Extract 08Aug15-22Aug15.csv', '12b Journey Data Extract 28Nov15-12Dec15.csv',
+     '4b.JourneyDataExtract 17Apr15-02May15.csv', '2b.JourneyDataExtract15Feb15-28Feb15.csv',
+     '13b Journey Data Extract 25Dec15-09Jan16.csv', '13a Journey Data Extract 13Dec15-24Dec15.csv',
+     '5b.JourneyDataExtract17May15-30May15.csv', '10a Journey Data Extract 20Sep15-03Oct15.csv']
+    fps = ['DUMMY/{}'.format(fp) for fp in FPS2015]
+
+    # Number of minutes of a time interval
+    INTERVAL = 10
+
+    # Lower and upper bounds of all relevant times as strings YYYY/MM/DD
+    LOWER = '2015/01/01'
+    UPPER = '2016/02/01'
+
+    # Execute
+    main(fps, INTERVAL, LOWER, UPPER)
