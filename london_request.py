@@ -25,7 +25,7 @@ def make_time_interval(start_date, end_date, interval_size):
 
     return df_out
 
-def massage_data_file(file_path, tinterval, interval_size):
+def massage_data_file(file_path, tinterval, interval_size, duration_upper):
 
     def round_minutes(dt, direction, resolution):
         new_minute = (dt.minute // resolution + (1 if direction == 'up' else 0)) * resolution
@@ -35,6 +35,12 @@ def massage_data_file(file_path, tinterval, interval_size):
     df_raw = pd.read_csv(file_path, index_col=0)
     df_raw['End Date'] = pd.to_datetime(df_raw['End Date'], dayfirst=True)
     df_raw['Start Date'] = pd.to_datetime(df_raw['Start Date'], dayfirst=True)
+
+    # Discard rental events of extremely long duration
+    df_raw = df_raw.loc[df_raw['Duration'] < duration_upper]
+
+    # Count station-to-station connections
+    df_graph_weight = df_raw.groupby(['StartStation Id', 'EndStation Id']).size()
 
     # Map time of bike event to a lower bound of the defined time bins
     df_raw['End Date Lower Bound'] = df_raw['End Date'].apply(round_minutes, **{'direction': 'down', 'resolution': interval_size})
@@ -72,10 +78,12 @@ def massage_data_file(file_path, tinterval, interval_size):
 
     df_all = df_arrival.join(df_departure, how='outer')
 
-    return df_all
+    return df_all, df_graph_weight
 
 def merge_data(file_name_root, max_file_index):
 
+    drop_indeces = None
+    file_counter = 0
     for ind in range(max_file_index):
         df = pd.read_csv('{}_{}.csv'.format(file_name_root, ind), index_col=(0, 1))
         for ind_ in range(ind + 1, max_file_index):
@@ -84,29 +92,54 @@ def merge_data(file_name_root, max_file_index):
 
             ss = df.join(df_, how='inner', lsuffix='_0', rsuffix='_1')
             if len(ss) > 0:
-                print (ss)
                 ss['arrivals'] = ss['arrivals_0'] + ss['arrivals_1']
                 ss['departures'] = ss['departures_0'] + ss['departures_1']
-                raise RuntimeError
+                ss = ss.drop(['arrivals_0', 'arrivals_1', 'departures_0', 'departures_1'], axis=1)
+                ss.to_csv('data_file_{}.csv'.format(file_counter))
+                file_counter += 1
 
-    raise RuntimeError
+                if drop_indeces is None:
+                    drop_indeces = ss.index
+                else:
+                    drop_indeces = drop_indeces.union(ss.index)
 
-def main(raw_data_file_paths, time_interval_size, lower_t_bound, upper_t_bound):
+    for ind in range(max_file_index):
+        df = pd.read_csv('{}_{}.csv'.format(file_name_root, ind), index_col=(0, 1))
+        mask = df.index.isin(drop_indeces)
+        df = df[~mask]
+        df.to_csv('data_file_{}.csv'.format(file_counter))
+        file_counter += 1
+
+def make_graph_weights(graphs):
+
+    cat_graph = pd.concat(graphs)
+    cat_graph_all = cat_graph.groupby(['StartStation Id','EndStation Id']).mean()
+    max_val = cat_graph_all.max()
+    cat_graph_all = (100.0 / max_val) * cat_graph_all
+    df = pd.DataFrame(cat_graph_all, columns=['weight'])
+
+    return df
+
+def main(raw_data_file_paths, time_interval_size, lower_t_bound, upper_t_bound, duration_upper):
 
     # Create a time interval id mapping to real-world times
     tinterval = make_time_interval(lower_t_bound, upper_t_bound, time_interval_size)
     tinterval.to_csv('tinterval.csv', index=False)
 
     # Reformat a collection of raw data files
-#    for k, file_path in enumerate(raw_data_file_paths):
-#        print (file_path)
-#        spatiotemp_ = massage_data_file(file_path, tinterval, time_interval_size)
-#        spatiotemp_.to_csv('data_reformat_{}.csv'.format(k))
+    graphs = []
+    for k, file_path in enumerate(raw_data_file_paths):
+        print (file_path)
+        spatiotemp_, graph_weights = massage_data_file(file_path, tinterval, time_interval_size, duration_upper)
+        spatiotemp_.to_csv('data_reformat_{}.csv'.format(k))
+        graphs.append(graph_weights)
+
+    # Put together the graph weight data
+    df_graph_all = make_graph_weights(graphs)
+    df_graph_all.to_csv('graph_weight.csv')
 
     # Deal with duplicate indices in adjacent files
-    k = 26
-    print (k)
-    merge_data('data_reformat', k)
+    merge_data('data_reformat', k + 1)
 
 if __name__ == '__main__':
 
@@ -124,14 +157,17 @@ if __name__ == '__main__':
      '4b.JourneyDataExtract 17Apr15-02May15.csv', '2b.JourneyDataExtract15Feb15-28Feb15.csv',
      '13b Journey Data Extract 25Dec15-09Jan16.csv', '13a Journey Data Extract 13Dec15-24Dec15.csv',
      '5b.JourneyDataExtract17May15-30May15.csv', '10a Journey Data Extract 20Sep15-03Oct15.csv']
-    fps = ['DUMMY/{}'.format(fp) for fp in FPS2015]
+    fps = ['/Users/andersohrn/Development/london_bike_forecast/data/2015TripDataZip/{}'.format(fp) for fp in FPS2015]
 
     # Number of minutes of a time interval
-    INTERVAL = 10
+    INTERVAL = 60
 
     # Lower and upper bounds of all relevant times as strings YYYY/MM/DD
     LOWER = '2015/01/01'
     UPPER = '2016/02/01'
 
+    # Highest allowed duration of rental event to be included
+    DURATION_UPPER=30000
+
     # Execute
-    main(fps, INTERVAL, LOWER, UPPER)
+    main(fps, INTERVAL, LOWER, UPPER, DURATION_UPPER)
