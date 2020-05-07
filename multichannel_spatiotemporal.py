@@ -4,6 +4,8 @@ from torch_geometric.nn import GCNConv
 
 from torch_geometric.data import Data
 
+from .london_dataset import LondonBikeDataset
+
 # Set a convention on input data tensor axes semantics
 IDX_CHANNEL = 1
 IDX_SPATIAL = 0
