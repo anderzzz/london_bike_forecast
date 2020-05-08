@@ -4,6 +4,7 @@ import pandas as pd
 
 import torch
 from torch_geometric.data import Dataset, DataLoader
+from torch_geometric.data import Data
 
 TIME_INTERVAL_FILENAME = 'tinterval.csv'
 GRAPH_WEIGHT_FILENAME = 'graph_weight.csv'
@@ -68,21 +69,35 @@ class LondonBikeDataset(Dataset):
 
         for raw_file_name in self.raw_file_names:
             df = pd.read_csv(raw_file_name)
+            if not self.station_id_exclusion is None:
+                df = df.loc[~df['station_id'].isin(self.station_id_exclusion)]
 
             time_id_start = df['time_id'].min()
             time_id_end = df['time_id'].max() - self.time_input_number - self.time_forward_pred
 
-            data_graphs_xy = self._make_time_windows(df, time_id_start, time_id_end)
+            data_graphs_xy = self._make_time_windows(df, time_id_start, time_id_end, edge_index, edge_attr)
+
+            # PICKLE AND SAVE IN ROOT
+            
             raise RuntimeError
 
-    def _make_time_windows(self, df, t_start, t_end):
+    def _make_time_windows(self, df, t_start, t_end, edge_index, edge_attr):
 
+        ret = []
         for t_val in range(t_start, t_end):
             df_x = df.loc[df['time_id'] < t_val + self.time_input_number]
             df_y = df.loc[df['time_id'] == t_val + self.time_input_number + self.time_forward_pred - 1]
-            print (df_x)
-            print (df_y)
-            raise RuntimeError
+
+            data_xt = []
+            for station_id, chunk in df_x.groupby('station_id'):
+                data_xt.append([chunk['arrivals'].tolist(),
+                              chunk['departures'].tolist()])
+            data_yt = [df_y['arrivals'].tolist(), df_y['departures'].tolist()]
+
+            data_graph = Data(x=data_xt, y=data_yt, edge_index=edge_index, edge_attr=edge_attr)
+            ret.append(data_graph)
+
+        return ret
 
     def _make_edges(self):
 
