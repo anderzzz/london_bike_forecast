@@ -1,8 +1,25 @@
+'''Functions to parse raw data files as retrieved from the database of Transport for London. The raw data
+is available at https://cycling.data.tfl.gov.uk
+
+The functions extract key information, performs filtering for basic sanity of data points, and creates new
+files in a simpler format for parsing by a data loader or other method.
+
+Written by: Anders Ohrn, May 2020
+
+'''
 import pandas as pd
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 
 def make_time_interval(start_date, end_date, interval_size):
+    '''Assign sorted integer index to each time interval of defined size between a starting date and
+    an ending date.
 
+    Args:
+        start_date (str) : Start date in format YYYY/MM/DD
+        end_date (str): End date in format YYYY/MM/DD
+        interval_size (int): Number of minutes in a time interval
+
+    '''
     x0 = datetime.strptime(start_date, '%Y/%m/%d')
     x1 = datetime.strptime(end_date, '%Y/%m/%d')
     time_jump = timedelta(minutes=interval_size)
@@ -26,6 +43,15 @@ def make_time_interval(start_date, end_date, interval_size):
     return df_out
 
 def massage_data_file(file_path, tinterval, interval_size, duration_upper):
+    '''Read raw data file and extract the salient data and format it.
+
+    Args:
+        file_path (str): Path to raw data file of CSV format as available in the Transport for London database
+        tinterval (DataFrame): Map between integer time index and an interval of date and time
+        interval_size (int): Number of minutes in a time interval
+        duration_upper (int): Number of seconds above which a rental event is deemed invalid.
+
+    '''
 
     def round_minutes(dt, direction, resolution):
         new_minute = (dt.minute // resolution + (1 if direction == 'up' else 0)) * resolution
@@ -61,7 +87,8 @@ def massage_data_file(file_path, tinterval, interval_size, duration_upper):
     g_departure = xx.groupby(by=['StartStation Id', 'Start Date ID'])
     df_departure = g_departure.size()
 
-    # Insert zero occurrences
+    # Raw data reports an event at a time and place, but not absence of an even at a time and place. All missing
+    # time-place coordinates are set to zero and the data set extended
     max_ind_1 = df_arrival.index.max()
     max_ind_2 = df_departure.index.max()
     max_station = int(max(max_ind_1[0], max_ind_2[0]))
@@ -80,22 +107,33 @@ def massage_data_file(file_path, tinterval, interval_size, duration_upper):
 
     return df_all, df_graph_weight
 
-def merge_data(file_name_root, max_file_index):
+def merge_data(file_name_root, max_file_index, file_name_save_root='data_file'):
+    '''The raw data is split between files, which implies that a place-time coordinate on the boundary between
+    two time-adjacent files can appear in two files, in one as arrival in the other as departure. This minority of
+    coordinates are identified and put into separate file and removed from the main filesi
 
+    Args:
+        file_name_root (str): File name root of the temporary data files
+        max_file_index (int): The highest index of the temporary data files
+        file_name_save_root (str, optional): File name root of the disjoint data files
+
+    '''
     drop_indeces = None
     file_counter = 0
+
+    # Triangular iteration through pairs of files to determine if there are overlapping time-place coordinates
     for ind in range(max_file_index):
         df = pd.read_csv('{}_{}.csv'.format(file_name_root, ind), index_col=(0, 1))
         for ind_ in range(ind + 1, max_file_index):
-            print (ind, ind_)
             df_ = pd.read_csv('{}_{}.csv'.format(file_name_root, ind_), index_col=(0, 1))
-
             ss = df.join(df_, how='inner', lsuffix='_0', rsuffix='_1')
+
+            # If time-place coordinate overlap found put coordinates in new common file
             if len(ss) > 0:
                 ss['arrivals'] = ss['arrivals_0'] + ss['arrivals_1']
                 ss['departures'] = ss['departures_0'] + ss['departures_1']
                 ss = ss.drop(['arrivals_0', 'arrivals_1', 'departures_0', 'departures_1'], axis=1)
-                ss.to_csv('data_file_{}.csv'.format(file_counter))
+                ss.to_csv('{}_{}.csv'.format(file_name_save_root, file_counter))
                 file_counter += 1
 
                 if drop_indeces is None:
@@ -103,22 +141,28 @@ def merge_data(file_name_root, max_file_index):
                 else:
                     drop_indeces = drop_indeces.union(ss.index)
 
+    # Discard overlapping time-place coordinates from the main files and
+    # save the disjoint files with new name and indexing
     for ind in range(max_file_index):
         df = pd.read_csv('{}_{}.csv'.format(file_name_root, ind), index_col=(0, 1))
         mask = df.index.isin(drop_indeces)
         df = df[~mask]
-        df.to_csv('data_file_{}.csv'.format(file_counter))
+        df.to_csv('{}_{}.csv'.format(file_name_save_root, file_counter))
         file_counter += 1
 
-def make_graph_weights(graphs):
+def make_graph_weights(graphs, norm_sum_weights=100.0):
+    '''Compute average edge weights for a plurality of weighted and directed graphs
 
+    '''
     cat_graph = pd.concat(graphs)
     cat_graph_all = cat_graph.groupby(['StartStation Id','EndStation Id']).mean()
-    max_val = cat_graph_all.max()
-    cat_graph_all = (100.0 / max_val) * cat_graph_all
-    df = pd.DataFrame(cat_graph_all, columns=['weight'])
 
-    return df
+    # Optionally normalize weights to sum to a specified total
+    if not norm_sum_weights is None:
+        sum_val = cat_graph_all.sum()
+        cat_graph_all = (norm_sum_weights / sum_val) * cat_graph_all
+
+    return pd.DataFrame(cat_graph_all, columns=['weight'])
 
 def main(raw_data_file_paths, time_interval_size, lower_t_bound, upper_t_bound, duration_upper):
 
@@ -129,7 +173,6 @@ def main(raw_data_file_paths, time_interval_size, lower_t_bound, upper_t_bound, 
     # Reformat a collection of raw data files
     graphs = []
     for k, file_path in enumerate(raw_data_file_paths):
-        print (file_path)
         spatiotemp_, graph_weights = massage_data_file(file_path, tinterval, time_interval_size, duration_upper)
         spatiotemp_.to_csv('data_reformat_{}.csv'.format(k))
         graphs.append(graph_weights)
