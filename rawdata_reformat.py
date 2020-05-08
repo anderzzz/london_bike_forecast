@@ -107,10 +107,12 @@ def massage_data_file(file_path, tinterval, interval_size, duration_upper):
 
     return df_all, df_graph_weight
 
-def merge_data(file_name_root, max_file_index, file_name_save_root='data_file'):
+def merge_data(file_name_root, max_file_index, file_name_save='data_file'):
     '''The raw data is split between files, which implies that a place-time coordinate on the boundary between
     two time-adjacent files can appear in two files, in one as arrival in the other as departure. This minority of
-    coordinates are identified and put into separate file and removed from the main filesi
+    coordinates are identified and put into separate file and removed from the main files
+
+    This function assumes all DataFrames can be put in memory. If that is false slight modification needed.
 
     Args:
         file_name_root (str): File name root of the temporary data files
@@ -119,7 +121,7 @@ def merge_data(file_name_root, max_file_index, file_name_save_root='data_file'):
 
     '''
     drop_indeces = None
-    file_counter = 0
+    df_all = []
 
     # Triangular iteration through pairs of files to determine if there are overlapping time-place coordinates
     for ind in range(max_file_index):
@@ -133,8 +135,7 @@ def merge_data(file_name_root, max_file_index, file_name_save_root='data_file'):
                 ss['arrivals'] = ss['arrivals_0'] + ss['arrivals_1']
                 ss['departures'] = ss['departures_0'] + ss['departures_1']
                 ss = ss.drop(['arrivals_0', 'arrivals_1', 'departures_0', 'departures_1'], axis=1)
-                ss.to_csv('{}_{}.csv'.format(file_name_save_root, file_counter))
-                file_counter += 1
+                df_all.append(ss)
 
                 if drop_indeces is None:
                     drop_indeces = ss.index
@@ -145,26 +146,28 @@ def merge_data(file_name_root, max_file_index, file_name_save_root='data_file'):
     # save the disjoint files with new name and indexing
     for ind in range(max_file_index):
         df = pd.read_csv('{}_{}.csv'.format(file_name_root, ind), index_col=(0, 1))
-        mask = df.index.isin(drop_indeces)
-        df = df[~mask]
-        df.to_csv('{}_{}.csv'.format(file_name_save_root, file_counter))
-        file_counter += 1
+        df = df[~df.index.isin(drop_indeces)]
+        df_all.append(df)
 
-def make_graph_weights(graphs, norm_sum_weights=100.0):
+    df_all = pd.concat(df_all)
+    df_all = df_all.sort_values(by=['time_id', 'station_id'])
+    df_all.to_csv(file_name_save)
+
+def make_graph_weights(graphs, norm=True):
     '''Compute average edge weights for a plurality of weighted and directed graphs
 
     '''
     cat_graph = pd.concat(graphs)
     cat_graph_all = cat_graph.groupby(['StartStation Id','EndStation Id']).mean()
 
-    # Optionally normalize weights to sum to a specified total
-    if not norm_sum_weights is None:
-        sum_val = cat_graph_all.sum()
-        cat_graph_all = (norm_sum_weights / sum_val) * cat_graph_all
+    # Optionally normalize weights such that median weight is 1.0
+    if norm:
+        median_val = cat_graph_all.median()
+        cat_graph_all = (1.0 / median_val) * cat_graph_all
 
     return pd.DataFrame(cat_graph_all, columns=['weight'])
 
-def main(raw_data_file_paths, time_interval_size, lower_t_bound, upper_t_bound, duration_upper):
+def main(raw_data_file_paths, time_interval_size, lower_t_bound, upper_t_bound, duration_upper, out_filename):
 
     # Create a time interval id mapping to real-world times
     tinterval = make_time_interval(lower_t_bound, upper_t_bound, time_interval_size)
@@ -182,7 +185,7 @@ def main(raw_data_file_paths, time_interval_size, lower_t_bound, upper_t_bound, 
     df_graph_all.to_csv('graph_weight.csv')
 
     # Deal with duplicate indices in adjacent files
-    merge_data('data_reformat', k + 1)
+    merge_data('data_reformat', k + 1, out_filename)
 
 if __name__ == '__main__':
 
@@ -205,6 +208,9 @@ if __name__ == '__main__':
     # Number of minutes of a time interval
     INTERVAL = 60
 
+    # Name of data output file
+    OUTFILENAME='data_2015_60m.csv'
+
     # Lower and upper bounds of all relevant times as strings YYYY/MM/DD
     LOWER = '2015/01/01'
     UPPER = '2016/02/01'
@@ -213,4 +219,4 @@ if __name__ == '__main__':
     DURATION_UPPER=30000
 
     # Execute
-    main(fps, INTERVAL, LOWER, UPPER, DURATION_UPPER)
+    main(fps, INTERVAL, LOWER, UPPER, DURATION_UPPER, OUTFILENAME)
