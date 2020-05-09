@@ -62,6 +62,13 @@ def massage_data_file(file_path, tinterval, interval_size, duration_upper):
     df_raw['End Date'] = pd.to_datetime(df_raw['End Date'], dayfirst=True)
     df_raw['Start Date'] = pd.to_datetime(df_raw['Start Date'], dayfirst=True)
 
+    # Some rentals did not terminate in a station. Discard these.
+    df_raw = df_raw[~df_raw['EndStation Id'].isna()]
+
+    # Force type
+    df_raw['EndStation Id'] = df_raw['EndStation Id'].astype(int)
+    df_raw['StartStation Id'] = df_raw['StartStation Id'].astype(int)
+
     # Discard rental events of extremely long duration
     df_raw = df_raw.loc[df_raw['Duration'] < duration_upper]
 
@@ -89,16 +96,13 @@ def massage_data_file(file_path, tinterval, interval_size, duration_upper):
 
     # Raw data reports an event at a time and place, but not absence of an even at a time and place. All missing
     # time-place coordinates are set to zero and the data set extended
-    max_ind_1 = df_arrival.index.max()
-    max_ind_2 = df_departure.index.max()
-    max_station = int(max(max_ind_1[0], max_ind_2[0]))
-    max_timeid = int(max(max_ind_1[1], max_ind_2[1]))
-    min_ind_1 = df_arrival.index.min()
-    min_ind_2 = df_departure.index.min()
-    min_station = int(min(min_ind_1[0], min_ind_2[0]))
-    min_timeid = int(min(min_ind_1[1], min_ind_2[1]))
-    new_index = pd.MultiIndex.from_product([list(range(min_station, max_station + 1)),
-                                            list(range(min_timeid, max_timeid + 1))],
+    s1 = df_arrival.index.get_level_values('EndStation Id').unique()
+    s2 = df_departure.index.get_level_values('StartStation Id').unique()
+    s_index = s1.union(s2)
+    t1 = df_arrival.index.get_level_values('End Date ID').unique()
+    t2 = df_departure.index.get_level_values('Start Date ID').unique()
+    t_index = t1.union(t2)
+    new_index = pd.MultiIndex.from_product([s_index, t_index],
                                            names=['station_id', 'time_id'])
     df_arrival = pd.DataFrame(df_arrival.reindex(new_index, fill_value=0), columns=['arrivals'])
     df_departure = pd.DataFrame(df_departure.reindex(new_index, fill_value=0), columns=['departures'])
@@ -206,10 +210,10 @@ if __name__ == '__main__':
     fps = ['/Users/andersohrn/Development/london_bike_forecast/data/2015TripDataZip/{}'.format(fp) for fp in FPS2015]
 
     # Number of minutes of a time interval
-    INTERVAL = 60
+    INTERVAL = 10
 
     # Name of data output file
-    OUTFILENAME='data_2015_60m.csv'
+    OUTFILENAME='data_2015_10m.csv'
 
     # Lower and upper bounds of all relevant times as strings YYYY/MM/DD
     LOWER = '2015/01/01'
