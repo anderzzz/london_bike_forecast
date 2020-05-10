@@ -4,8 +4,6 @@ from torch_geometric.nn import GCNConv
 
 from torch_geometric.data import Data
 
-from .london_dataset import LondonBikeDataset
-
 # Set a convention on input data tensor axes semantics
 IDX_CHANNEL = 1
 IDX_SPATIAL = 0
@@ -92,6 +90,74 @@ class SpatialGraphConv(SpatioTemporal):
 
         return nodes_times_norm
 
+class STGCN(torch.nn.Module):
+
+    def __init__(self, n_temporal_dim, n_spatial_dim, n_input_channels,
+                 co_temporal=64, co_spatial=16, time_conv_length=3):
+
+        super(STGCN, self).__init__()
+
+        self.n_temporal_dim = n_temporal_dim
+        self.n_spatial_dim = n_spatial_dim
+        self.n_input_channels = n_input_channels
+        self.co_temporal = co_temporal
+        self.co_spatial = co_spatial
+
+        assert n_temporal_dim - 4 * time_conv_length + 4 == 1
+
+        self.model_t_1a = Time1dConvGLU(n_spatial_dim, n_temporal_dim,
+                                        channel_inputs=n_input_channels,
+                                        channel_outputs=co_temporal,
+                                        time_convolution_length=time_conv_length)
+        self.model_s_1 = SpatialGraphConv(n_spatial_dim, n_temporal_dim - time_conv_length + 1,
+                                          channel_inputs=co_temporal,
+                                          channel_outputs=co_spatial)
+        self.model_t_1b = Time1dConvGLU(n_spatial_dim, n_temporal_dim - time_conv_length + 1,
+                                        channel_inputs=co_spatial,
+                                        channel_outputs=co_temporal,
+                                        time_convolution_length=time_conv_length)
+
+        self.model_t_2a = Time1dConvGLU(n_spatial_dim, n_temporal_dim - 2 * time_conv_length + 2,
+                                        channel_inputs=co_temporal,
+                                        channel_outputs=co_temporal,
+                                        time_convolution_length=time_conv_length)
+        self.model_s_2 = SpatialGraphConv(n_spatial_dim, n_temporal_dim - 3 * time_conv_length + 3,
+                                          channel_inputs=co_temporal,
+                                          channel_outputs=co_spatial)
+        self.model_t_2b = Time1dConvGLU(n_spatial_dim, n_temporal_dim - 3 * time_conv_length + 3,
+                                        channel_inputs=co_spatial,
+                                        channel_outputs=co_temporal,
+                                        time_convolution_length=time_conv_length)
+
+        self.model_output = torch.nn.Sequential(torch.nn.Linear(in_features=n_spatial_dim * co_temporal,
+                                                                out_features=n_spatial_dim * co_temporal),
+                                                torch.nn.ReLU(),
+                                                torch.nn.Linear(in_features=n_spatial_dim * co_temporal,
+                                                                out_features=n_spatial_dim * n_input_channels))
+
+    def forward(self, data_graph):
+
+        data_step_0 = data_graph
+        edge_index = data_graph.edge_index
+        edge_attr = data_graph.edge_attr
+
+        data_step_0_x = data_step_0.x
+        data_step_1_x = self.model_t_1a(data_step_0_x)
+        data_step_1 = Data(data_step_1_x, edge_index, edge_attr)
+        data_step_2_x = self.model_s_1(data_step_1)
+        data_step_3_x = self.model_t_1b(data_step_2_x)
+
+        data_step_4_x = self.model_t_2a(data_step_3_x)
+        data_step_4 = Data(data_step_4_x, edge_index, edge_attr)
+        data_step_5_x = self.model_s_2(data_step_4)
+        data_step_6_x = self.model_t_2b(data_step_5_x)
+
+        data_output_x = self.model_output(data_step_6_x.reshape(self.n_spatial_dim * self.co_temporal))
+        data_output_x = data_output_x.reshape(self.n_spatial_dim, self.n_input_channels)
+        data_output = Data(data_output_x, edge_index, edge_attr)
+
+        return data_output
+
 def construct_data():
 
     edge_index = torch.tensor([[0, 1, 1, 2, 2, 3, 2, 4],
@@ -102,11 +168,11 @@ def construct_data():
                       [[3,2,2,8,9,8,8,9,6],[40,40,30,40,40,50,30,40,30]],
                       [[5,4,3,3,2,9,1,1,1],[50,40,40,50,80,40,50,20,40]],
                       [[9,0,9,2,8,3,2,9,0],[60,70,70,20,20,60,60,60,60]]], dtype=torch.float)
-#    x = torch.tensor([[[1, 15], [2, 12], [3, 22], [0, 14], [1, 19]],
-#                      [[2, 10], [4, 10], [6, 25], [3, 20], [6, 24]],
-#                      [[3, 19], [7, 30], [5, 28], [1, 21], [1, 26]],
-#                      [[4, 12], [4, 19], [3, 29], [0, 25], [4, 21]],
-#                      [[5, 22], [0, 12], [1, 16], [2, 16], [5, 22]]], dtype=torch.float)
+    #    x = torch.tensor([[[1, 15], [2, 12], [3, 22], [0, 14], [1, 19]],
+    #                      [[2, 10], [4, 10], [6, 25], [3, 20], [6, 24]],
+    #                      [[3, 19], [7, 30], [5, 28], [1, 21], [1, 26]],
+    #                      [[4, 12], [4, 19], [3, 29], [0, 25], [4, 21]],
+    #                      [[5, 22], [0, 12], [1, 16], [2, 16], [5, 22]]], dtype=torch.float)
     data = Data(x=x, edge_index=edge_index)
 
     return data
@@ -114,65 +180,10 @@ def construct_data():
 def main():
 
     data_step_0 = construct_data()
-    edge_index = data_step_0.edge_index
-    edge_attr = data_step_0.edge_attr
-    n_spatial_data = data_step_0.x.shape[IDX_SPATIAL]
-    n_temporal_data = data_step_0.x.shape[IDX_TEMPORAL]
-    n_channel_data = data_step_0.x.shape[IDX_CHANNEL]
 
-    c_t_1a, c_s_1, c_t_1b = 64, 16, 64
-    c_t_2a, c_s_2, c_t_2b = 64, 16, 64
-    time_conv_length = 3
-
-    assert n_temporal_data - 4 * time_conv_length + 4 == 1
-
-    model_t_1a = Time1dConvGLU(n_spatial_data, n_temporal_data,
-                               channel_inputs=n_channel_data,
-                               channel_outputs=c_t_1a,
-                               time_convolution_length=time_conv_length)
-    model_s_1 = SpatialGraphConv(n_spatial_data, n_temporal_data - time_conv_length + 1,
-                                 channel_inputs=c_t_1a,
-                                 channel_outputs=c_s_1)
-    model_t_1b = Time1dConvGLU(n_spatial_data, n_temporal_data - time_conv_length + 1,
-                               channel_inputs=c_s_1,
-                               channel_outputs=c_t_1b,
-                               time_convolution_length=time_conv_length)
-
-    model_t_2a = Time1dConvGLU(n_spatial_data, n_temporal_data - 2 * time_conv_length + 2,
-                               channel_inputs=c_t_1b,
-                               channel_outputs=c_t_2a,
-                               time_convolution_length=time_conv_length)
-    model_s_2 = SpatialGraphConv(n_spatial_data, n_temporal_data - 3 * time_conv_length + 3,
-                                 channel_inputs=c_t_2a,
-                                 channel_outputs=c_s_2)
-    model_t_2b = Time1dConvGLU(n_spatial_data, n_temporal_data - 3 * time_conv_length + 3,
-                               channel_inputs=c_s_2,
-                               channel_outputs=c_t_2b,
-                               time_convolution_length=time_conv_length)
-
-    model_output = torch.nn.Sequential(torch.nn.Linear(in_features=n_spatial_data * c_t_2b,
-                                                       out_features=n_spatial_data * c_t_2b),
-                                       torch.nn.ReLU(),
-                                       torch.nn.Linear(in_features=n_spatial_data * c_t_2b,
-                                                       out_features=n_spatial_data * n_channel_data))
-
-    data_step_0_x = data_step_0.x
-    data_step_1_x = model_t_1a(data_step_0_x)
-    data_step_1 = Data(data_step_1_x, edge_index, edge_attr)
-    data_step_2_x = model_s_1(data_step_1)
-    data_step_3_x = model_t_1b(data_step_2_x)
-
-    data_step_4_x = model_t_2a(data_step_3_x)
-    data_step_4 = Data(data_step_4_x, edge_index, edge_attr)
-    data_step_5_x = model_s_2(data_step_4)
-    data_step_6_x = model_t_2b(data_step_5_x)
-
-    data_output_x = model_output(data_step_6_x.reshape(n_spatial_data * c_t_2b))
-    data_output_x = data_output_x.reshape(n_spatial_data, n_channel_data)
-    data_output = Data(data_output_x, edge_index, edge_attr)
-
-#    print (data_output.x)
-    print (data_output.x.shape)
+    stgcn = STGCN(9, 5, 2)
+    out = stgcn.forward(data_step_0)
+    print (out)
 
 if __name__ == '__main__':
     main()
