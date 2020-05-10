@@ -1,7 +1,27 @@
+'''London bike sharing dataset class for Pytorch geometric. The class builds on the Dataset parent from
+Pytorch Geometric.
+
+The raw data can be selected and transformed in several ways in order to create input and output data
+situated on the graph. That includes the time interval resolution and year. However most important is the
+way a sliding window is used on the raw data in order to create the input and output. For example, the raw
+data contains two data channels per bike station (the spatial dimension) and time interval (the temporal
+dimension). In a prediction task, for a given bike station, the values at the two data channels are given
+for a certain number of input temporal coordinates (e.g. t3,t2,t1), and during training the value of the
+two data channels at one temporal coordinate into the future is given (e.g. tX). The number of inputs and
+the coordinate of the output relative the inputs define the sliding window. As that sliding window moves
+over the raw data, the input and expected output for the training task are obtained. The precise number
+of such data slices depend non-trivially on the inputs to the class. For that reason the class deviates in
+the initialization from the template Dataset class.
+
+Written by: Anders Ohrn, May 2020
+
+'''
 import torch
 from torch_geometric.data import Dataset, DataLoader
 from torch_geometric.data import Data
 
+from os import listdir, makedirs, remove
+import os.path as osp
 import pandas as pd
 
 '''Standard name of time interval index file (input)'''
@@ -13,7 +33,7 @@ GRAPH_WEIGHT_FILENAME = 'graph_weight_2015.csv'
 '''Standard name of the station ID to name map file (input)'''
 STATION_ID_FILENAME = 'station_id.csv'
 
-'''NN'''
+'''File prefix for the processed files'''
 TIME_SLICE_NAME = 'time_slice'
 
 '''Standard name of pickled torch tensor of graph adjacency matrix (output)'''
@@ -27,8 +47,6 @@ YEARS = [2015]
 
 '''Time intervals available for possible processing'''
 T_INTERVALS = [10, 20, 30, 60]
-
-N_STATIONS = 783
 
 class LondonBikeDataset(Dataset):
     '''The Geometric PyTorch dataset class to make raw data available for Pytorch processing, including DataLoaders
@@ -51,16 +69,19 @@ class LondonBikeDataset(Dataset):
         compatible with the model architecture. Default 9.
         time_forward_pred(int, optional): How far into the future from the most recent given data point the prediction
         is aimed. Default 1.
+        process (bool, optional): Flag to determine if the class initialization should create all the sliced data or
+        just link to already processed data in the `root_dir`.
 
     '''
     def __init__(self, source_dir, root_dir, toc_file='toc.csv',
                  transform=None, pre_transform=None,
                  station_id_exclusion=None, weight_filter=None, time_id_bounds=None,
                  time_interval=30, years=[2015],
-                 time_input_number=9, time_forward_pred=1):
+                 time_input_number=9, time_forward_pred=1,
+                 process=True):
 
-        # Data input: location
         self.source_dir = source_dir
+        self.root = root_dir
         self.toc = pd.read_csv(self.source_dir + '/' + toc_file)
 
         # Data input: year and time resolution subset
@@ -80,7 +101,18 @@ class LondonBikeDataset(Dataset):
         self.weight_filter = weight_filter
         self.time_id_bounds = time_id_bounds
 
-        self._processed_file_names = ['qqq']
+        # Either create files or simply link to existing ones. This slightly convoluted way is required because
+        # the total number of processed files is only known after the processing is done. Therefore the
+        # process command must be made explicit unlike the template Dataset
+        if process:
+            if not osp.exists(root_dir):
+                makedirs(root_dir)
+            else:
+                for ff in listdir(root_dir):
+                    remove(root_dir + '/' + ff)
+            self.create_torch_data()
+        else:
+            self._processed_file_names = listdir(root_dir)
 
         super(LondonBikeDataset, self).__init__(root_dir, transform, pre_transform)
 
@@ -95,10 +127,15 @@ class LondonBikeDataset(Dataset):
     def len(self):
         return len(self.processed_file_names)
 
-    def process(self):
+    def get(self, idx):
+        data = torch.load(self.root +'/' + TIME_SLICE_NAME + '_{}.pt'.format(idx))
+        return data
+
+    def create_torch_data(self):
 
         edge_index, edge_attr = self._make_edges()
 
+        self._processed_file_names = []
         for raw_file_name in self.raw_file_names:
             df = pd.read_csv(self.source_dir + '/' + raw_file_name)
 
@@ -122,10 +159,6 @@ class LondonBikeDataset(Dataset):
                 torch.save(data_graph, self.root + '/' + TIME_SLICE_NAME + '_{}.pt'.format(count))
                 self._processed_file_names.append('{}_{}.pt'.format(TIME_SLICE_NAME, count))
                 count += 1
-
-    def get(self, idx):
-        data = torch.load(self.root +'/' + TIME_SLICE_NAME + '_{}.pt'.format(idx))
-        return data
 
     def _make_time_windows(self, df, t_start, t_end):
 
@@ -195,11 +228,13 @@ def test():
                                      '/Users/andersohrn/PycharmProjects/torch/data_tmp',
                                      weight_filter=0.01,
                                      time_id_bounds=(100,200),
-                                     time_forward_pred=6)
-    bike_dataset.process()
+                                     time_forward_pred=6,
+                                     process=True)
     bike_dataset.get(0)
     bike_dataset.get(30)
-    bike_dataloader = DataLoader(bike_dataset)
+    bike_dataloader = DataLoader(bike_dataset, batch_size=4)
+    for dd in bike_dataloader:
+        print (dd)
 
 if __name__ == '__main__':
     test()
