@@ -157,17 +157,34 @@ def merge_data(file_name_root, max_file_index, file_name_save='data_file'):
     df_all = df_all.sort_values(by=['time_id', 'station_id'])
     df_all.to_csv(file_name_save)
 
-def make_graph_weights(graphs, norm=True):
+def make_graph_weights(graphs, norm='median', kwargs_norm={}):
     '''Compute average edge weights for a plurality of weighted and directed graphs
 
-    '''
-    cat_graph = pd.concat(graphs)
-    cat_graph_all = cat_graph.groupby(['StartStation Id','EndStation Id']).mean()
+    Args:
+        graphs (list): Collection of Series indexed on pairs of station Id with non-zero occurrence in associated raw data
+        norm (str, numeric, optional): How to normalize weights. If string it should be a method of a Pandas
+                                       DataFrame that returns a single numeric value. If a numeric value, it is used
+                                       to divide all values with.
+        kwargs_norm (dict, optional): Arguments to the normalizing method
 
-    # Optionally normalize weights such that median weight is 1.0
-    if norm:
-        median_val = cat_graph_all.median()
-        cat_graph_all = (1.0 / median_val) * cat_graph_all
+    '''
+    # Create index that contains all station pairs that ever appears in the raw data files
+    # and apply this index to all graphs. This is needed to handle rare connections that may be absent in some raw data files
+    mega_index = graphs[0].index
+    for graph in graphs[1:]:
+        mega_index = mega_index.union(graph.index)
+    g_expand = [g.reindex(mega_index, fill_value=0) for g in graphs]
+    cat_graph = pd.concat(g_expand)
+
+    cat_graph_all = cat_graph.groupby(['StartStation Id','EndStation Id']).sum()
+
+    if not norm is None:
+        if isinstance(norm, str):
+            norm_val = getattr(cat_graph_all, norm)(**kwargs_norm)
+        elif isinstance(norm, (int, float, complex)):
+            norm_val = norm
+
+        cat_graph_all = (1.0 / norm_val) * cat_graph_all
 
     return pd.DataFrame(cat_graph_all, columns=['weight'])
 
@@ -213,7 +230,7 @@ if __name__ == '__main__':
     INTERVAL = 10
 
     # Name of data output file
-    OUTFILENAME='data_2015_10m.csv'
+    OUTFILENAME='data_10m_2015.csv'
 
     # Lower and upper bounds of all relevant times as strings YYYY/MM/DD
     LOWER = '2015/01/01'
