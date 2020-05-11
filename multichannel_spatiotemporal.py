@@ -22,8 +22,6 @@ class SpatioTemporal(torch.nn.Module):
         self.channel_inputs = channel_inputs
         self.channel_outputs = channel_outputs
 
-        self.permute_norm = (IDX_CHANNEL, IDX_SPATIAL, IDX_TEMPORAL)
-
 class Time1dConvGLU(SpatioTemporal):
     '''Convolution along time dimension with gated linear unit as output activation
 
@@ -48,7 +46,6 @@ class Time1dConvGLU(SpatioTemporal):
 
         n_temporal_out = self.n_temporal - time_convolution_length + 1
         assert n_temporal_out > 0
-        self.layer_norm = torch.nn.LayerNorm([self.n_spatial, n_temporal_out])
 
     def forward(self, x):
         '''Forward operation'''
@@ -59,10 +56,9 @@ class Time1dConvGLU(SpatioTemporal):
             y_conv_and_gated_out = F.glu(pq_out, dim=1)
             total.append(y_conv_and_gated_out)
 
-        nodes_times_nonnorm = torch.cat(total, dim=IDX_SPATIAL)
-        nodes_times_norm = self.layer_norm(nodes_times_nonnorm.permute(self.permute_norm)).permute(self.permute_norm)
+        nodes_spatial = torch.cat(total, dim=IDX_SPATIAL)
 
-        return nodes_times_norm
+        return nodes_spatial
 
 class SpatialGraphConv(SpatioTemporal):
 
@@ -71,7 +67,6 @@ class SpatialGraphConv(SpatioTemporal):
         super(SpatialGraphConv, self).__init__(n_spatial, n_temporal, channel_inputs, channel_outputs)
 
         self.gcn = GCNConv(self.channel_inputs, self.channel_outputs)
-        self.layer_norm = torch.nn.LayerNorm([self.n_spatial, self.n_temporal])
 
     def forward(self, data):
 
@@ -85,10 +80,9 @@ class SpatialGraphConv(SpatioTemporal):
             y_t = F.relu(y_t)
             total.append(y_t)
 
-        nodes_times_nonnorm = torch.stack(total, dim=IDX_TEMPORAL)
-        nodes_times_norm = self.layer_norm(nodes_times_nonnorm.permute(self.permute_norm)).permute(self.permute_norm)
+        nodes_times = torch.stack(total, dim=IDX_TEMPORAL)
 
-        return nodes_times_norm
+        return nodes_times
 
 class STGCN(torch.nn.Module):
 
@@ -97,11 +91,13 @@ class STGCN(torch.nn.Module):
 
         super(STGCN, self).__init__()
 
-        self.n_temporal_dim = n_temporal_dim
-        self.n_spatial_dim = n_spatial_dim
+        self.n_temporal = n_temporal_dim
+        self.n_spatial = n_spatial_dim
         self.n_input_channels = n_input_channels
         self.co_temporal = co_temporal
         self.co_spatial = co_spatial
+
+        self.permute_norm = (IDX_CHANNEL, IDX_SPATIAL, IDX_TEMPORAL)
 
         assert n_temporal_dim - 4 * time_conv_length + 4 == 1
 
@@ -116,6 +112,7 @@ class STGCN(torch.nn.Module):
                                         channel_inputs=co_spatial,
                                         channel_outputs=co_temporal,
                                         time_convolution_length=time_conv_length)
+        self.layer_norm_1 = torch.nn.LayerNorm([n_spatial_dim, n_temporal_dim - 2 * time_conv_length + 2])
 
         self.model_t_2a = Time1dConvGLU(n_spatial_dim, n_temporal_dim - 2 * time_conv_length + 2,
                                         channel_inputs=co_temporal,
@@ -128,6 +125,7 @@ class STGCN(torch.nn.Module):
                                         channel_inputs=co_spatial,
                                         channel_outputs=co_temporal,
                                         time_convolution_length=time_conv_length)
+        self.layer_norm_2 = torch.nn.LayerNorm([n_spatial_dim, n_temporal_dim - 4 * time_conv_length + 4])
 
         self.model_output = torch.nn.Sequential(torch.nn.Linear(in_features=n_spatial_dim * co_temporal,
                                                                 out_features=n_spatial_dim * co_temporal),
@@ -140,23 +138,53 @@ class STGCN(torch.nn.Module):
         data_step_0 = data_graph
         edge_index = data_graph.edge_index
         edge_attr = data_graph.edge_attr
+        self.n_graphs_in_batch = self._infer_batch_size(data_step_0.x)
 
         data_step_0_x = data_step_0.x
         data_step_1_x = self.model_t_1a(data_step_0_x)
         data_step_1 = Data(data_step_1_x, edge_index, edge_attr)
         data_step_2_x = self.model_s_1(data_step_1)
         data_step_3_x = self.model_t_1b(data_step_2_x)
+        data_step_3_x = self._compute_layer_norm(data_step_3_x, self.layer_norm_1)
 
         data_step_4_x = self.model_t_2a(data_step_3_x)
         data_step_4 = Data(data_step_4_x, edge_index, edge_attr)
         data_step_5_x = self.model_s_2(data_step_4)
         data_step_6_x = self.model_t_2b(data_step_5_x)
+        data_step_6_x = self._compute_layer_norm(data_step_6_x, self.layer_norm_2)
 
-        data_output_x = self.model_output(data_step_6_x.reshape(self.n_spatial_dim * self.co_temporal))
-        data_output_x = data_output_x.reshape(self.n_spatial_dim, self.n_input_channels)
-        data_output = Data(data_output_x, edge_index, edge_attr)
+        data_out_reshape = data_step_6_x.reshape(self.n_graphs_in_batch, self.n_spatial * self.co_temporal)
+        data_output_x = self.model_output(data_out_reshape)
+        data_output_x = data_output_x.reshape(self.n_graphs_in_batch * self.n_spatial, self.n_input_channels)
 
-        return data_output
+        return Data(y=data_output_x, edge_index=edge_index, edge_attr=edge_attr)
+
+    def _infer_batch_size(self, data_x):
+        '''Infer if data was produced in batches by Pytorch geometric, and if so, how many'''
+
+        if data_x.shape[IDX_SPATIAL] % self.n_spatial == 0:
+            n_batches = data_x.shape[IDX_SPATIAL] // self.n_spatial
+        else:
+            raise RuntimeError('A batch of graphs obtained with spatial dimension not an integer multiplier of initialized size {}'.format(self.n_spatial))
+
+        return n_batches
+
+    def _compute_layer_norm(self, data_x, norm_func):
+        '''Compute the layer normalization over the channels for each spatio-temporal coordinate.
+
+        The computation requires a temporary permutation of axes since the convention of
+        `torch.nn.LayerNorm` is that the average and standard deviation are computed over the axes
+        up to the normalized shape of the initialization. Each spatio-temporal coordinate should
+        have its own normalization, hence the spatial and temporal axes have to be put last
+
+        '''
+        ret = []
+        for k_batch in range(self.n_graphs_in_batch):
+            data_x_pergraph = data_x.narrow(IDX_SPATIAL, k_batch * self.n_spatial, self.n_spatial)
+            data_x_pergraph_norm = norm_func(data_x_pergraph.permute(self.permute_norm)).permute(self.permute_norm)
+            ret.append(data_x_pergraph_norm)
+
+        return torch.cat(ret)
 
 def construct_data():
 
