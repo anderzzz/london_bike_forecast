@@ -1,3 +1,8 @@
+'''Script for training the London bike forecast graph convolutional neural net
+
+Written by: Anders Ohrn, May 2020
+
+'''
 import torch
 import torch.nn.functional as F
 from torch_geometric.data import DataLoader
@@ -5,10 +10,25 @@ from torch_geometric.data import DataLoader
 from multichannel_spatiotemporal import STGCN
 from london_dataset import LondonBikeDataset
 
+'''Path to folder with all data files as obtained from the rawdata_reformat script'''
 PATH_RAW = '/Users/andersohrn/Development/london_bike_forecast/data_preprocessed'
+
+'''Path to temporary folder in which files are temporarily stored; overwritten'''
 PATH_PROCESS = '/Users/andersohrn/PycharmProjects/torch/data_tmp'
 
+'''Path to folder to save intermediate model and optimizer state dictionaries'''
+PATH_MODEL = '/Users/andersohrn/PycharmProjects/torch/model_save'
+
 def main(max_epochs, dataset_kwargs, dataloader_kwargs, model_kwargs, optimizer_kwargs):
+    '''
+
+    :param max_epochs: Maximum number of epochs in the training
+    :param dataset_kwargs: Dictionary of kwargs for the creation of a LondonBikeDataset instance
+    :param dataloader_kwargs: Dictionary of kwargs for the creation of a PyTorch geometric DataLoader instance
+    :param model_kwargs: Dictionary of kwargs for the spatio-temporal graph convolutional net model instance
+    :param optimizer_kwargs: Dictionary of kwargs for the SGD optimizer used for the training
+    :return:
+    '''
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     london_bike_data = LondonBikeDataset(PATH_RAW, PATH_PROCESS,
@@ -35,7 +55,13 @@ def main(max_epochs, dataset_kwargs, dataloader_kwargs, model_kwargs, optimizer_
             print ('a2')
             optimizer.step()
             print ('a3')
-            raise RuntimeError
+
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss': loss},
+            PATH_MODEL + '/model_save_{}.tar'.format(epoch))
 
 
 if __name__ == '__main__':
