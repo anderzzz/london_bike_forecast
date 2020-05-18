@@ -42,7 +42,7 @@ def make_time_interval(start_date, end_date, interval_size):
 
     return df_out
 
-def massage_data_file(file_path, tinterval, interval_size, duration_upper):
+def massage_data_file(file_path, tinterval, interval_size, duration_upper, station_exclude):
     '''Read raw data file and extract the salient data and format it.
 
     Args:
@@ -50,6 +50,7 @@ def massage_data_file(file_path, tinterval, interval_size, duration_upper):
         tinterval (DataFrame): Map between integer time index and an interval of date and time
         interval_size (int): Number of minutes in a time interval
         duration_upper (int): Number of seconds above which a rental event is deemed invalid.
+        station_exclude (list): List of station IDs for stations to be excluded from all consideration.
 
     '''
 
@@ -71,6 +72,10 @@ def massage_data_file(file_path, tinterval, interval_size, duration_upper):
 
     # Discard rental events of extremely long duration
     df_raw = df_raw.loc[df_raw['Duration'] < duration_upper]
+
+    # Exclude stations
+    df_raw = df_raw.loc[~df_raw['StartStation Id'].isin(station_exclude)]
+    df_raw = df_raw.loc[~df_raw['EndStation Id'].isin(station_exclude)]
 
     # Count station-to-station connections
     df_graph_weight = df_raw.groupby(['StartStation Id', 'EndStation Id']).size()
@@ -150,7 +155,9 @@ def merge_data(file_name_root, max_file_index, file_name_save='data_file'):
     # save the disjoint files with new name and indexing
     for ind in range(max_file_index):
         df = pd.read_csv('{}_{}.csv'.format(file_name_root, ind), index_col=(0, 1))
-        df = df[~df.index.isin(drop_indeces)]
+
+        if not drop_indeces is None:
+            df = df[~df.index.isin(drop_indeces)]
         df_all.append(df)
 
     df_all = pd.concat(df_all)
@@ -188,7 +195,8 @@ def make_graph_weights(graphs, norm='median', kwargs_norm={}):
 
     return pd.DataFrame(cat_graph_all, columns=['weight'])
 
-def main(raw_data_file_paths, time_interval_size, lower_t_bound, upper_t_bound, duration_upper, out_filename):
+def main(raw_data_file_paths, time_interval_size, lower_t_bound, upper_t_bound,
+         duration_upper, stations_exclude, out_filename):
 
     # Create a time interval id mapping to real-world times
     tinterval = make_time_interval(lower_t_bound, upper_t_bound, time_interval_size)
@@ -197,7 +205,7 @@ def main(raw_data_file_paths, time_interval_size, lower_t_bound, upper_t_bound, 
     # Reformat a collection of raw data files
     graphs = []
     for k, file_path in enumerate(raw_data_file_paths):
-        spatiotemp_, graph_weights = massage_data_file(file_path, tinterval, time_interval_size, duration_upper)
+        spatiotemp_, graph_weights = massage_data_file(file_path, tinterval, time_interval_size, duration_upper, stations_exclude)
         spatiotemp_.to_csv('data_reformat_{}.csv'.format(k))
         graphs.append(graph_weights)
 
@@ -227,10 +235,10 @@ if __name__ == '__main__':
     fps = ['/Users/andersohrn/Development/london_bike_forecast/data/2015TripDataZip/{}'.format(fp) for fp in FPS2015]
 
     # Number of minutes of a time interval
-    INTERVAL = 10
+    INTERVAL = 30
 
     # Name of data output file
-    OUTFILENAME='data_10m_2015.csv'
+    OUTFILENAME='data_tiny.csv'
 
     # Lower and upper bounds of all relevant times as strings YYYY/MM/DD
     LOWER = '2015/01/01'
@@ -239,5 +247,9 @@ if __name__ == '__main__':
     # Highest allowed duration of rental event to be included
     DURATION_UPPER=30000
 
+    # Station exclude list
+    keep_stations = [14,717,713,695,641]
+    STATION_EXCLUDE = [x for x in range(1000) if not x in keep_stations]
+
     # Execute
-    main(fps, INTERVAL, LOWER, UPPER, DURATION_UPPER, OUTFILENAME)
+    main(fps, INTERVAL, LOWER, UPPER, DURATION_UPPER, STATION_EXCLUDE, OUTFILENAME)
