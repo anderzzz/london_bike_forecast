@@ -104,9 +104,9 @@ def massage_data_file(file_path, tinterval, interval_size, duration_upper, stati
     s1 = df_arrival.index.get_level_values('EndStation Id').unique()
     s2 = df_departure.index.get_level_values('StartStation Id').unique()
     s_index = s1.union(s2)
-    t1 = df_arrival.index.get_level_values('End Date ID').unique()
-    t2 = df_departure.index.get_level_values('Start Date ID').unique()
-    t_index = t1.union(t2)
+    t1 = df_arrival.index.get_level_values('End Date ID').min()
+    t2 = df_departure.index.get_level_values('Start Date ID').max()
+    t_index = pd.Int64Index(list(range(t1, t2 + 1)), dtype='int64')
     new_index = pd.MultiIndex.from_product([s_index, t_index],
                                            names=['station_id', 'time_id'])
     df_arrival = pd.DataFrame(df_arrival.reindex(new_index, fill_value=0), columns=['arrivals'])
