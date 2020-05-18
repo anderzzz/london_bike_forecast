@@ -24,23 +24,11 @@ from os import listdir, makedirs, remove
 import os.path as osp
 import pandas as pd
 
-'''Standard name of time interval index file (input)'''
-TIME_INTERVAL_FILENAME = 'tinterval.csv'
-
 '''Standard name of the weighted directed station to station file (input)'''
-GRAPH_WEIGHT_FILENAME = 'graph_weight_2015.csv'
-
-'''Standard name of the station ID to name map file (input)'''
-STATION_ID_FILENAME = 'station_id.csv'
+GRAPH_WEIGHT_FILENAME = 'graph_weight.csv'
 
 '''File prefix for the processed files'''
 TIME_SLICE_NAME = 'time_slice'
-
-'''Standard name of pickled torch tensor of graph adjacency matrix (output)'''
-BIKE_G_ADJACENCY = 'bike_graph_adjacency_coo.pt'
-
-'''Standard name of pickled torch tensor of graph weight matrix (output)'''
-BIKE_G_WEIGHT = 'bike_graph_weight_coo.pt'
 
 '''Years available for possible processing'''
 YEARS = [2015]
@@ -73,7 +61,7 @@ class LondonBikeDataset(Dataset):
         just link to already processed data in the `root_dir`.
 
     '''
-    def __init__(self, source_dir, root_dir, toc_file='toc.csv',
+    def __init__(self, source_dir, root_dir, toc_file='toc.csv', name_prefix='data',
                  transform=None, pre_transform=None,
                  station_id_exclusion=None, weight_filter=None, time_id_bounds=None,
                  time_interval=30, years=[2015],
@@ -83,6 +71,7 @@ class LondonBikeDataset(Dataset):
         self.source_dir = source_dir
         self.root = root_dir
         self.toc = pd.read_csv(self.source_dir + '/' + toc_file)
+        self.name_prefix = name_prefix
 
         # Data input: year and time resolution subset
         self.time_interval = time_interval
@@ -118,7 +107,8 @@ class LondonBikeDataset(Dataset):
 
     @property
     def raw_file_names(self):
-        return ['data_{}m_{}/data_{}m_{}.csv'.format(self.time_interval, year, self.time_interval, year) for year in self.years]
+        return ['{}_{}m_{}/{}_{}m_{}.csv'.format(self.name_prefix, self.time_interval, year,
+                                                 self.name_prefix, self.time_interval, year) for year in self.years]
 
     @property
     def processed_file_names(self):
@@ -149,6 +139,7 @@ class LondonBikeDataset(Dataset):
             # The range of sliding window origins for which to produce time-ordered dependent and independent data
             time_id_start = df['time_id'].min()
             time_id_end = df['time_id'].max() - self.time_input_number - self.time_forward_pred
+            print (time_id_start, time_id_end)
 
             # Create data graphs for each sliding window and store as processed files
             count = 0
@@ -167,6 +158,9 @@ class LondonBikeDataset(Dataset):
             df_x = df.loc[(df['time_id'] < t_val + self.time_input_number) & \
                           (df['time_id'] >= t_val)]
             df_y = df.loc[df['time_id'] == t_val + self.time_input_number + self.time_forward_pred - 1]
+
+            assert len(df_x) > 0
+            assert len(df_y) > 0
 
             # Move from pandas to torch tensor compatible data. Because a given time slice may have been created
             # from raw data that does not include events at all stations in the graph, all stations are accounted
@@ -224,8 +218,9 @@ class LondonBikeDataset(Dataset):
 
 def test():
 
-    bike_dataset = LondonBikeDataset('/Users/andersohrn/Development/london_bike_forecast/data_preprocessed',
+    bike_dataset = LondonBikeDataset('/Users/andersohrn/Development/london_bike_forecast/data_preprocessed_tiny',
                                      '/Users/andersohrn/PycharmProjects/torch/data_tmp',
+                                     name_prefix='data_tiny',
                                      weight_filter=0.01,
                                      time_id_bounds=(100,200),
                                      time_forward_pred=6,
