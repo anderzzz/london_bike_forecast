@@ -139,7 +139,6 @@ class LondonBikeDataset(Dataset):
             # The range of sliding window origins for which to produce time-ordered dependent and independent data
             time_id_start = df['time_id'].min()
             time_id_end = df['time_id'].max() - self.time_input_number - self.time_forward_pred
-            print (time_id_start, time_id_end)
 
             # Create data graphs for each sliding window and store as processed files
             count = 0
@@ -159,8 +158,8 @@ class LondonBikeDataset(Dataset):
                           (df['time_id'] >= t_val)]
             df_y = df.loc[df['time_id'] == t_val + self.time_input_number + self.time_forward_pred - 1]
 
-            assert len(df_x) > 0
-            assert len(df_y) > 0
+            if len(df_x) == 0 or len(df_y) == 0:
+                raise RuntimeError('Encountered missing time for time_X: {}, and time_Y: {}'.format(t_val, t_val + self.time_input_number + self.time_forward_pred - 1))
 
             # Move from pandas to torch tensor compatible data. Because a given time slice may have been created
             # from raw data that does not include events at all stations in the graph, all stations are accounted
