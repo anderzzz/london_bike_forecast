@@ -7,6 +7,7 @@ files in a simpler format for parsing by a data loader or other method.
 Written by: Anders Ohrn, May 2020
 
 '''
+import os
 import pandas as pd
 from datetime import datetime, timedelta
 
@@ -62,6 +63,11 @@ def massage_data_file(file_path, tinterval, interval_size, duration_upper, stati
     df_raw = pd.read_csv(file_path, index_col=0)
     df_raw['End Date'] = pd.to_datetime(df_raw['End Date'], dayfirst=True)
     df_raw['Start Date'] = pd.to_datetime(df_raw['Start Date'], dayfirst=True)
+
+    # Create the header mapper. Truly annoying feature of data is that headers are not named exactly the same over the years
+    df_raw = df_raw.rename(columns={'End Station Id' : 'EndStation Id', 'Start Station Id' : 'StartStation Id',
+                                    'Duration_Seconds' : 'Duration', 'End Station Name' : 'EndStation Name',
+                                    'Start Station Name' : 'StartStation Name'})
 
     # Some rentals did not terminate in a station. Discard these.
     df_raw = df_raw[~df_raw['EndStation Id'].isna()]
@@ -205,6 +211,7 @@ def main(raw_data_file_paths, time_interval_size, lower_t_bound, upper_t_bound,
     # Reformat a collection of raw data files
     graphs = []
     for k, file_path in enumerate(raw_data_file_paths):
+        print ('Processing... {}'.format(file_path))
         spatiotemp_, graph_weights = massage_data_file(file_path, tinterval, time_interval_size, duration_upper, stations_exclude)
         spatiotemp_.to_csv('data_reformat_{}.csv'.format(k))
         graphs.append(graph_weights)
@@ -219,37 +226,26 @@ def main(raw_data_file_paths, time_interval_size, lower_t_bound, upper_t_bound,
 if __name__ == '__main__':
 
     # File paths to raw data files
-    FPS2015 = ['9a-Journey-Data-Extract-23Aug15-05Sep15.csv', '11b Journey Data Extract 01Nov15-14Nov15.csv',
-     '5a.JourneyDataExtract03May15-16May15.csv', '3a.JourneyDataExtract01Mar15-15Mar15.csv',
-     '10b Journey Data Extract 04Oct15-17Oct15.csv', '9b-Journey-Data-Extract-06Sep15-19Sep15.csv',
-     '4a.JourneyDataExtract01Apr15-16Apr15.csv', '2a.JourneyDataExtract01Feb15-14Feb15.csv',
-     '7b.JourneyDataExtract12Jul15-25Jul15.csv', '11a Journey Data Extract 18Oct15-31Oct15.csv',
-     '6bJourneyDataExtract13Jun15-27Jun15.csv', '6aJourneyDataExtract31May15-12Jun15.csv',
-     '8aJourneyDataExtract26Jul15-07Aug15.csv', '1b.JourneyDataExtract18Jan15-31Jan15.csv',
-     '12a Journey Data Extract 15Nov15-27Nov15.csv', '3b.JourneyDataExtract16Mar15-31Mar15.csv',
-     '7a.JourneyDataExtract28Jun15-11Jul15.csv', '1a.JourneyDataExtract04Jan15-17Jan15.csv',
-     '8bJourneyData Extract 08Aug15-22Aug15.csv', '12b Journey Data Extract 28Nov15-12Dec15.csv',
-     '4b.JourneyDataExtract 17Apr15-02May15.csv', '2b.JourneyDataExtract15Feb15-28Feb15.csv',
-     '13b Journey Data Extract 25Dec15-09Jan16.csv', '13a Journey Data Extract 13Dec15-24Dec15.csv',
-     '5b.JourneyDataExtract17May15-30May15.csv', '10a Journey Data Extract 20Sep15-03Oct15.csv']
-    fps = ['/Users/andersohrn/Development/london_bike_forecast/data/2015TripDataZip/{}'.format(fp) for fp in FPS2015]
+    files = os.listdir('/Users/andersohrn/Development/london_bike_forecast/data/recent/')
+    fps = ['/Users/andersohrn/Development/london_bike_forecast/data/recent/{}'.format(fp) for fp in files]
 
     # Number of minutes of a time interval
-    INTERVAL = 30
+    INTERVAL = 60
 
     # Name of data output file
-    OUTFILENAME='data_tiny.csv'
+    OUTFILENAME='data.csv'
 
     # Lower and upper bounds of all relevant times as strings YYYY/MM/DD
-    LOWER = '2015/01/01'
-    UPPER = '2016/02/01'
+    LOWER = '2016/12/01'
+    UPPER = '2020/09/01'
 
     # Highest allowed duration of rental event to be included
     DURATION_UPPER=30000
 
     # Station exclude list
-    keep_stations = [14,717,713,695,641]
-    STATION_EXCLUDE = [x for x in range(1000) if not x in keep_stations]
+#    keep_stations = [14,717,713,695,641]
+#    STATION_EXCLUDE = [x for x in range(1000) if not x in keep_stations]
+    STATION_EXCLUDE = []
 
     # Execute
     main(fps, INTERVAL, LOWER, UPPER, DURATION_UPPER, STATION_EXCLUDE, OUTFILENAME)
