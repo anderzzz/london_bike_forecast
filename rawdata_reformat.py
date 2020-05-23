@@ -10,6 +10,7 @@ Written by: Anders Ohrn, May 2020
 import os
 import pandas as pd
 from datetime import datetime, timedelta
+from london_consts import STATION_CONSTS
 
 def make_time_interval(start_date, end_date, interval_size):
     '''Assign sorted integer index to each time interval of defined size between a starting date and
@@ -79,6 +80,14 @@ def massage_data_file(file_path, tinterval, interval_size, duration_upper, stati
     # Discard rental events of extremely long duration
     df_raw = df_raw.loc[df_raw['Duration'] < duration_upper]
 
+    # Validate station IDs
+    s_diff = set(df_raw['StartStation Id'].to_list()) - set(STATION_CONSTS['station_id'])
+    e_diff = set(df_raw['EndStation Id'].to_list()) - set(STATION_CONSTS['station_id'])
+    if len(s_diff) > 0:
+        raise RuntimeError('In file {} unknown start station IDs: {}'.format(file_path, s_diff))
+    if len(e_diff) > 0:
+        raise RuntimeError('In file {} unknown end station IDs: {}'.format(file_path, e_diff))
+
     # Exclude stations
     df_raw = df_raw.loc[~df_raw['StartStation Id'].isin(station_exclude)]
     df_raw = df_raw.loc[~df_raw['EndStation Id'].isin(station_exclude)]
@@ -142,6 +151,7 @@ def merge_data(file_name_root, max_file_index, file_name_save='data_file'):
     for ind in range(max_file_index):
         df = pd.read_csv('{}_{}.csv'.format(file_name_root, ind), index_col=(0, 1))
         for ind_ in range(ind + 1, max_file_index):
+            print ('Processing file pair {}-{} of {}'.format(ind, ind_, max_file_index))
             df_ = pd.read_csv('{}_{}.csv'.format(file_name_root, ind_), index_col=(0, 1))
             ss = df.join(df_, how='inner', lsuffix='_0', rsuffix='_1')
 
@@ -242,9 +252,8 @@ if __name__ == '__main__':
     # Highest allowed duration of rental event to be included
     DURATION_UPPER=30000
 
-    # Station exclude list
-#    keep_stations = [14,717,713,695,641]
-#    STATION_EXCLUDE = [x for x in range(1000) if not x in keep_stations]
+    # Station exclude list. Unlike exclusion in DataSet class, exclusion here removes the stations from the graph
+    # and all bike rental events involving the station, not just the former.
     STATION_EXCLUDE = []
 
     # Execute
