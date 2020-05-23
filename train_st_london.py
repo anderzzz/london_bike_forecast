@@ -81,21 +81,21 @@ def main(max_epochs, path_model_save, path_model_load,
 
 if __name__ == '__main__':
 
-    #keep_stations = [14, 717, 713, 695, 641]
-    #exclude_stations = [x for x in range(1000) if not x in keep_stations]
-    exclude_stations = [413, 782, 497, 783, 781, 33, 500, 283, 434, 241, 780, 525, 346, 503, 492, 205, 206, 259, 282,
-                        779, 491, 31, 183, 502, 736, 80, 226, 495, 478, 694, 302, 195, 84, 555, 581, 437, 233, 762,
-                        631, 162, 105, 102, 435, 121, 53, 36, 319, 344]
+    exclude_stations = [8, 20, 26, 41, 44, 59, 70, 79, 96, 112, 147, 153, 161, 175, 196, 201, 207, 210, 224, 233, 241,
+                        258, 259, 260, 269, 283, 289, 290, 291, 300, 304, 305, 311, 316, 318, 319, 338, 345, 346, 355,
+                        358, 359, 386, 391, 400, 408, 419, 434, 442, 461, 474, 482, 487, 501, 502, 527, 539, 551, 591,
+                        598, 600, 648, 659, 665, 666, 672, 705, 719, 725, 752, 753, 758, 775, 778, 783, 788, 794, 795,
+                        799, 805, 808, 816, 818, 821, 823, 825, 826, 827, 828, 829, 830, 831, 832, 833, 834, 835, 836,
+                        838, 839]
     dataset_kwargs = {'weight_filter' : 1.0,
-                      'time_id_bounds' : (100, 3000),
-                      'time_interval' : 30,
+                      'time_id_bounds' : (648, 3528),
+                      'time_interval' : 60,
                       'station_id_exclusion' : exclude_stations,
-                      'years' : [2015],
                       'time_input_number' : 9,
                       'time_forward_pred' : 2,
-                      'name_prefix': 'data',
+                      'name_prefix': '1701_2004',
                       'root_dir' : '/Users/andersohrn/PycharmProjects/torch/data_tmp',
-                      'source_dir' : '/Users/andersohrn/Development/london_bike_forecast/data_preprocessed'}
+                      'source_dir' : '/Users/andersohrn/Development/london_bike_forecast/data_reformat_May21'}
 
     dataloader_kwargs = {'batch_size' : 50, 'shuffle' : True}
 

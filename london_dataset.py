@@ -2,7 +2,7 @@
 Pytorch Geometric.
 
 The raw data can be selected and transformed in several ways in order to create input and output data
-situated on the graph. That includes the time interval resolution and year. However most important is the
+situated on the graph. That includes the time interval resolution. However most important is the
 way a sliding window is used on the raw data in order to create the input and output. For example, the raw
 data contains two data channels per bike station (the spatial dimension) and time interval (the temporal
 dimension). In a prediction task, for a given bike station, the values at the two data channels are given
@@ -30,9 +30,6 @@ GRAPH_WEIGHT_FILENAME = 'graph_weight.csv'
 '''File prefix for the processed files'''
 TIME_SLICE_NAME = 'time_slice'
 
-'''Years available for possible processing'''
-YEARS = [2015]
-
 '''Time intervals available for possible processing'''
 T_INTERVALS = [10, 20, 30, 60]
 
@@ -43,7 +40,6 @@ class LondonBikeDataset(Dataset):
         source_dir (str): Path to source directory for input data to process. This should contain data files
         obtained from `rawdata_reformat`, and a table of content file to aid navigation.
         root_dir (str): Path to directory for pickled output files, such that processing step can be run just once.
-        toc_file (str, optional): File name of the table of content CSV file in the `source_dir`.
         transform
         pre_transform
         station_id_exclusion (list, optional): If certain stations should be entirely excluded from consideration,
@@ -52,7 +48,6 @@ class LondonBikeDataset(Dataset):
         time_id_bounds (tuple, optional): If only data for subset of times are to be considered, provide the lower
         and upper bound time indeces as a tuple of two integers.
         time_interval (int, optional): Which data to use with respect to the time interval resolution. Default 30 minutes.
-        years (list, optional): Which data to use with respect to the years. Default 2015.
         time_input_number(int, optional): How many preceeding time values to provide the predictor with. Must be a value
         compatible with the model architecture. Default 9.
         time_forward_pred(int, optional): How far into the future from the most recent given data point the prediction
@@ -61,25 +56,22 @@ class LondonBikeDataset(Dataset):
         just link to already processed data in the `root_dir`.
 
     '''
-    def __init__(self, source_dir, root_dir, toc_file='toc.csv', name_prefix='data',
+    def __init__(self, source_dir, root_dir, name_prefix='data', rawname_prefix='dataraw',
                  transform=None, pre_transform=None,
                  station_id_exclusion=None, weight_filter=None, time_id_bounds=None,
-                 time_interval=30, years=[2015],
+                 time_interval=30,
                  time_input_number=9, time_forward_pred=1,
                  process=True):
 
         self.source_dir = source_dir
         self.root = root_dir
-        self.toc = pd.read_csv(self.source_dir + '/' + toc_file)
         self.name_prefix = name_prefix
+        self.rawname_prefix = rawname_prefix
 
-        # Data input: year and time resolution subset
+        # Select subset of raw data on basis of time resolution
         self.time_interval = time_interval
         if not self.time_interval in T_INTERVALS:
             raise ValueError('Specified time interval resolution {} not available'.format(time_interval))
-        self.years = years
-        if not len(set(self.years) - set(YEARS)) == 0:
-            raise ValueError('Specified years {} not subset of available years {}'.format(years, YEARS))
 
         # Time slice: how many inputs, X, and how far into the future from X the predicted value, y, is
         self.time_input_number = time_input_number
@@ -107,8 +99,8 @@ class LondonBikeDataset(Dataset):
 
     @property
     def raw_file_names(self):
-        return ['{}_{}m_{}/{}_{}m_{}.csv'.format(self.name_prefix, self.time_interval, year,
-                                                 self.name_prefix, self.time_interval, year) for year in self.years]
+        return ['{}_{}m/{}_{}m.csv'.format(self.name_prefix, self.time_interval,
+                                           self.rawname_prefix, self.time_interval)]
 
     @property
     def processed_file_names(self):
@@ -217,9 +209,9 @@ class LondonBikeDataset(Dataset):
 
 def test():
 
-    bike_dataset = LondonBikeDataset('/Users/andersohrn/Development/london_bike_forecast/data_preprocessed_tiny',
+    bike_dataset = LondonBikeDataset('/Users/andersohrn/Development/london_bike_forecast/data_reformat_May21',
                                      '/Users/andersohrn/PycharmProjects/torch/data_tmp',
-                                     name_prefix='data_tiny',
+                                     name_prefix='1701_2004',
                                      weight_filter=0.01,
                                      time_id_bounds=(100,200),
                                      time_forward_pred=6,
