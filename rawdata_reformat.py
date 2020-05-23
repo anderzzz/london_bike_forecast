@@ -177,8 +177,39 @@ def merge_data(file_name_root, max_file_index, file_name_save='data_file'):
         df_all.append(df)
 
     df_all = pd.concat(df_all)
-    df_all = df_all.sort_values(by=['time_id', 'station_id'])
-    df_all.to_csv(file_name_save)
+
+    df_all = add_zeros(df_all, 0.98)
+    df_all.to_csv(file_name_save, index=False)
+
+def add_zeros(df, station_occ_min_frac=0.0):
+    '''On rare occassions stations are off-line for a week or more. The long stretches of missing data is absent,
+    but can through this function be replaced with zeros. However, stations that lack data for very long stretches
+    should be removed entirely instead.
+
+    Args:
+        df (DataFrame): station and time, values of departures and arrivals
+        station_occ_min_frac (float) : the fraction of times at which the station has to be present in order
+            to be included at all. For all stations above the threshold, missing stretches of data are replaced with zeros.
+
+    Returns:
+        df_all (DataFrame): station and time, values of departures and arrivals, with possibly some rarely used
+            stations removed compared to input, and some station-time rows added with departures and arrivals set to zero
+
+    '''
+    station_occ = df.groupby('station_id').count()
+    station_occ_max = station_occ['departures'].max()
+    station_occ_min = station_occ_max * station_occ_min_frac
+    station_id_above = station_occ.loc[station_occ['departures'] >= station_occ_min].index
+    df = df.loc[df['station_id'].isin(station_id_above.to_list())]
+
+    time_id_all = df.groupby('time_id').count().index
+    mind_full = pd.MultiIndex.from_product([station_id_above, time_id_all])
+
+    df = df.set_index(['station_id','time_id'])
+    df = df.reindex(mind_full, fill_value=0)
+    df = df.reset_index().sort_values(by=['time_id','station_id'])
+
+    return df
 
 def make_graph_weights(graphs, norm='median', kwargs_norm={}):
     '''Compute average edge weights for a plurality of weighted and directed graphs
@@ -245,7 +276,7 @@ if __name__ == '__main__':
     fps = ['/Users/andersohrn/Development/london_bike_forecast/data/recent/{}'.format(fp) for fp in files]
 
     # Number of minutes of a time interval
-    INTERVAL = 15
+    INTERVAL = 60
 
     # Name of data output file
     OUTFILENAME='data.csv'
