@@ -10,7 +10,6 @@ Written by: Anders Ohrn, May 2020
 import os
 import pandas as pd
 from datetime import datetime, timedelta
-from london_consts import STATION_CONSTS
 
 def make_time_interval(start_date, end_date, interval_size):
     '''Assign sorted integer index to each time interval of defined size between a starting date and
@@ -44,7 +43,7 @@ def make_time_interval(start_date, end_date, interval_size):
 
     return df_out
 
-def massage_data_file(file_path, tinterval, interval_size, duration_upper, station_exclude):
+def massage_data_file(file_path, tinterval, interval_size, duration_upper, station_exclude, station_const_ids):
     '''Read raw data file and extract the salient data and format it.
 
     Args:
@@ -53,6 +52,7 @@ def massage_data_file(file_path, tinterval, interval_size, duration_upper, stati
         interval_size (int): Number of minutes in a time interval
         duration_upper (int): Number of seconds above which a rental event is deemed invalid.
         station_exclude (list): List of station IDs for stations to be excluded from all consideration.
+        station_const_ids (set): The known station IDs, to use for validation
 
     '''
 
@@ -81,8 +81,8 @@ def massage_data_file(file_path, tinterval, interval_size, duration_upper, stati
     df_raw = df_raw.loc[df_raw['Duration'] < duration_upper]
 
     # Validate station IDs
-    s_diff = set(df_raw['StartStation Id'].to_list()) - set(STATION_CONSTS['station_id'])
-    e_diff = set(df_raw['EndStation Id'].to_list()) - set(STATION_CONSTS['station_id'])
+    s_diff = set(df_raw['StartStation Id'].to_list()) - station_const_ids
+    e_diff = set(df_raw['EndStation Id'].to_list()) - station_const_ids
     if len(s_diff) > 0:
         raise RuntimeError('In file {} unknown start station IDs: {}'.format(file_path, s_diff))
     if len(e_diff) > 0:
@@ -212,17 +212,22 @@ def make_graph_weights(graphs, norm='median', kwargs_norm={}):
     return pd.DataFrame(cat_graph_all, columns=['weight'])
 
 def main(raw_data_file_paths, time_interval_size, lower_t_bound, upper_t_bound,
-         duration_upper, stations_exclude, out_filename):
+         duration_upper, stations_exclude, out_filename, station_filename):
 
     # Create a time interval id mapping to real-world times
     tinterval = make_time_interval(lower_t_bound, upper_t_bound, time_interval_size)
     tinterval.to_csv('tinterval.csv', index=False)
 
+    # Retrieve station constants
+    stations_const = pd.read_csv(station_filename)
+    stations_const_ids = set(stations_const['station_id'].to_list())
+
     # Reformat a collection of raw data files
     graphs = []
     for k, file_path in enumerate(raw_data_file_paths):
         print ('Processing... {}'.format(file_path))
-        spatiotemp_, graph_weights = massage_data_file(file_path, tinterval, time_interval_size, duration_upper, stations_exclude)
+        spatiotemp_, graph_weights = massage_data_file(file_path, tinterval, time_interval_size,
+                                                       duration_upper, stations_exclude, stations_const_ids)
         spatiotemp_.to_csv('data_reformat_{}.csv'.format(k))
         graphs.append(graph_weights)
 
@@ -240,7 +245,7 @@ if __name__ == '__main__':
     fps = ['/Users/andersohrn/Development/london_bike_forecast/data/recent/{}'.format(fp) for fp in files]
 
     # Number of minutes of a time interval
-    INTERVAL = 60
+    INTERVAL = 15
 
     # Name of data output file
     OUTFILENAME='data.csv'
@@ -256,5 +261,8 @@ if __name__ == '__main__':
     # and all bike rental events involving the station, not just the former.
     STATION_EXCLUDE = []
 
+    # Station file constants for validation
+    STATION_CONST_FILE='/Users/andersohrn/Development/london_bike_forecast/data_reformat_May21/station_id_name.csv'
+
     # Execute
-    main(fps, INTERVAL, LOWER, UPPER, DURATION_UPPER, STATION_EXCLUDE, OUTFILENAME)
+    main(fps, INTERVAL, LOWER, UPPER, DURATION_UPPER, STATION_EXCLUDE, OUTFILENAME, STATION_CONST_FILE)
