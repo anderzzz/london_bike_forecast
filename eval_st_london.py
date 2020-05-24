@@ -3,13 +3,13 @@
 Written by: Anders Ohrn, May 2020
 
 '''
-from datetime import datetime
 import torch
 
 from torch_geometric.data import DataLoader
 
 from multichannel_spatiotemporal import STGCN
 from london_dataset import LondonBikeDataset
+from consts import EXCLUDE_STATIONS
 
 def main(path_model_load, dataset_kwargs, dataloader_kwargs, model_kwargs):
     '''
@@ -49,13 +49,10 @@ def main(path_model_load, dataset_kwargs, dataloader_kwargs, model_kwargs):
 
 if __name__ == '__main__':
 
-    exclude_stations = [413, 782, 497, 783, 781, 33, 500, 283, 434, 241, 780, 525, 346, 503, 492, 205, 206, 259, 282,
-                        779, 491, 31, 183, 502, 736, 80, 226, 495, 478, 694, 302, 195, 84, 555, 581, 437, 233, 762,
-                        631, 162, 105, 102, 435, 121, 53, 36, 319, 344]
     dataset_kwargs = {'weight_filter' : 1.0,
                       'time_id_bounds' : (100, 3000),
                       'time_interval' : 30,
-                      'station_id_exclusion' : exclude_stations,
+                      'station_id_exclusion' : EXCLUDE_STATIONS,
                       'years' : [2017],
                       'time_input_number' : 9,
                       'time_forward_pred' : 2,
