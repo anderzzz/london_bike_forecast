@@ -86,8 +86,8 @@ def main(max_epochs, path_model_save, path_model_load,
 if __name__ == '__main__':
 
     dataset_kwargs = {'weight_filter' : 1.0,
-                      'time_id_bounds' : (648, 3528),
-                      'time_interval' : 60,
+                      'time_id_bounds' : (1488, 2159),
+                      'time_interval' : 30,
                       'process' : False,
                       'station_id_exclusion' : EXCLUDE_STATIONS,
                       'time_input_number' : 9,
@@ -96,7 +96,7 @@ if __name__ == '__main__':
                       'root_dir' : '/Users/andersohrn/PycharmProjects/torch/data_tmp',
                       'source_dir' : '/Users/andersohrn/Development/london_bike_forecast/data_reformat_May21'}
 
-    dataloader_kwargs = {'batch_size' : 50, 'shuffle' : True}
+    dataloader_kwargs = {'batch_size' : 64, 'shuffle' : True}
 
     model_kwargs = {'n_temporal_dim' : 9, 'n_input_channels' : 2,
                     'co_temporal' :64, 'co_spatial' :16, 'time_conv_length' : 3}
@@ -104,10 +104,10 @@ if __name__ == '__main__':
     optimizer_kwargs = {'lr' : 0.01,
                         'momentum' : 0.9}
 
-    max_epochs = 2
+    max_epochs = 1
 
     path_model_save = '/Users/andersohrn/PycharmProjects/torch/model_save/model_save'
-    #path_model_load = '/Users/andersohrn/PycharmProjects/torch/model_save/model_store_may19.tar'
+    #path_model_load = '/Users/andersohrn/PycharmProjects/torch/model_save/model_store_may24_1.tar'
     path_model_load = None
     main(max_epochs,
          path_model_save, path_model_load,

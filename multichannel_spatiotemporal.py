@@ -128,9 +128,9 @@ class STGCN(torch.nn.Module):
         self.layer_norm_2 = torch.nn.LayerNorm([n_spatial_dim, n_temporal_dim - 4 * time_conv_length + 4])
 
         self.model_output = torch.nn.Sequential(torch.nn.Linear(in_features=n_spatial_dim * co_temporal,
-                                                                out_features=n_spatial_dim * co_temporal),
+                                                                out_features=n_spatial_dim * n_input_channels),
                                                 torch.nn.ReLU(),
-                                                torch.nn.Linear(in_features=n_spatial_dim * co_temporal,
+                                                torch.nn.Linear(in_features=n_spatial_dim * n_input_channels,
                                                                 out_features=n_spatial_dim * n_input_channels))
 
     def forward(self, data_graph):
