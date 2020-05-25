@@ -148,6 +148,10 @@ class LondonBikeDataset(Dataset):
                 df = df.loc[(df['time_id'] >= self.time_id_bounds[0]) & \
                             (df['time_id'] <= self.time_id_bounds[1])]
 
+            # In the event that filters removed all data, jump to next iteration
+            if len(df) == 0:
+                continue
+
             # The range of sliding window origins for which to produce time-ordered dependent and independent data
             time_id_start = df['time_id'].min()
             time_id_end = df['time_id'].max() - self.time_input_number - self.time_forward_pred
