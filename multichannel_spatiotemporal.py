@@ -1,3 +1,12 @@
+'''The SpatioTemporal Graph Convolutional Net (STGCN) method involving four distinct 1D convolutions along the
+temporal dimension and two distinct graph convolutions along the spatial dimensions. The method involves two
+layer normalizations and one fully connected layer with ReLu activation
+
+The method is almost identical to the method published by Yu, Yin, and Zhu (2018) arXiv:1709.04875v4
+
+Written by Anders Ohrn, May 2020
+
+'''
 import torch
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv
@@ -10,7 +19,9 @@ IDX_SPATIAL = 0
 IDX_TEMPORAL = 2
 
 class SpatioTemporal(torch.nn.Module):
+    '''Base Class for the Spatio Temporal classes
 
+    '''
     def __init__(self, n_spatial, n_temporal,
                  channel_inputs, channel_outputs):
 
@@ -25,13 +36,23 @@ class SpatioTemporal(torch.nn.Module):
 class Time1dConvGLU(SpatioTemporal):
     '''Convolution along time dimension with gated linear unit as output activation
 
+    The temporal convolution applies a 1D convolution of a set kernel size. The temporal convolution is applied
+    to all spatial units in the forward operation. That is, the parameters are the same for all spatial
+    units. The output of the 1D convolution is passed through a gated linear unit, hence the channel output is
+    cut in half.
+
+    The input dimension is (N, T, Cin) and the output dimension is (N, T-k+1, Cout), where N is the number of
+    spatial units, T is the number of temporal units per spatial unit, k is the kernel size, Cin the number of
+    channels of the input, and Cout the number of channels of the output.
+
+    Number of parameters scale as: 2 * Cout + 2 * Cout * Cin * k
+
     Args:
+        n_spatial (int): Number of spatial units in mode, equal to number of nodes in graph
+        n_temporal (int): Number of contiguous temporal units per spatial unit
         channel_inputs (int): Number of channels of input per node
         channel_outputs (int): Number of channels of output per node
         time_convolution_length (int): The kernel size of the time convolution window
-        dim_node (int, Optional): The dimension for the nodes on the data. Default is 0
-        dim_channels_input (int, Optional): The dimension for the input channels on the data. Default is 1
-        dim_timestep (int, Optional): The dimension for the time steps on the data. Default is 2
 
     '''
     def __init__(self, n_spatial, n_temporal, channel_inputs, channel_outputs,
@@ -48,7 +69,7 @@ class Time1dConvGLU(SpatioTemporal):
         assert n_temporal_out > 0
 
     def forward(self, x):
-        '''Forward operation'''
+        '''Forward operation. Apply the same temporal convolution to all spatial units'''
 
         total = []
         for k_node, tensor_node in enumerate(x.split(1, dim=IDX_SPATIAL)):
@@ -61,7 +82,23 @@ class Time1dConvGLU(SpatioTemporal):
         return nodes_spatial
 
 class SpatialGraphConv(SpatioTemporal):
+    '''Convolution in spatial dimension with graph convolution
 
+        The graph convolution is applied to all temporal layers, so one set of parameters apply to all
+        temporal layers. The graph convolution is based on the graph Laplacian, and hence only spatial units
+        that are connected can contribute to each others outputs after convolution.
+
+        The input dimension is (N, T, Cin) and the output dimension is (N, T, Cout), where N is the number of
+        spatial units, T is the number of temporal units per spatial unit, Cin the number of
+        channels of the input, and Cout the number of channels of the output.
+
+        Args:
+            n_spatial (int): Number of spatial units in mode, equal to number of nodes in graph
+            n_temporal (int): Number of contiguous temporal units per spatial unit
+            channel_inputs (int): Number of channels of input per node
+            channel_outputs (int): Number of channels of output per node
+
+    '''
     def __init__(self, n_spatial, n_temporal, channel_inputs, channel_outputs):
 
         super(SpatialGraphConv, self).__init__(n_spatial, n_temporal, channel_inputs, channel_outputs)
@@ -85,7 +122,18 @@ class SpatialGraphConv(SpatioTemporal):
         return nodes_times
 
 class STGCN(torch.nn.Module):
+    '''The main SpatioTemporal Graph Convolutional Net class, based on temporal and spatial convolutions along
+    with two layer normalizations and a fully connected layer at the end.
 
+    Args:
+        n_temporal_dim (int): Number of temporal units per spatial units as input
+        n_spatial_dim (int): Number of spatial units
+        n_input_channels (int): Number of data channels of input
+        co_temporal (int, optional): Number of data output channels following a temporal convolution. Default 64.
+        co_spatial (int, optional): Number of data output channels following a spatial convolution. Default 16.
+        time_conv_length (int, optional): Length of temporal convolution window. Default 3.
+
+    '''
     def __init__(self, n_temporal_dim, n_spatial_dim, n_input_channels,
                  co_temporal=64, co_spatial=16, time_conv_length=3):
 
@@ -186,6 +234,9 @@ class STGCN(torch.nn.Module):
 
         return torch.cat(ret)
 
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
 def construct_data():
 
     edge_index = torch.tensor([[0, 1, 1, 2, 2, 3, 2, 4],
@@ -210,6 +261,7 @@ def main():
     data_step_0 = construct_data()
 
     stgcn = STGCN(9, 5, 2)
+    print (count_parameters(stgcn.model_output))
     out = stgcn.forward(data_step_0)
     print (out)
 
