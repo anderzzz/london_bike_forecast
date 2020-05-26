@@ -23,6 +23,7 @@ from torch_geometric.data import Data
 from os import listdir, makedirs, remove
 import os.path as osp
 import pandas as pd
+import numpy as np
 
 '''File prefix for the processed files'''
 TIME_SLICE_NAME = 'time_slice'
@@ -75,7 +76,8 @@ class LondonBikeDataset(Dataset):
     def __init__(self, source_dir, root_dir,
                  dir_name_prefix='bikedata', raw_name_prefix='dataraw', graph_weight_name='graph_weight.csv',
                  transform=None, pre_transform=None,
-                 station_id_exclusion=None, weight_filter=None, time_id_bounds=None,
+                 station_id_exclusion=None, weight_filter=None,
+                 time_id_bounds=None, time_shuffle=False, time_sample_size=None,
                  time_interval=30,
                  time_input_number=9, time_forward_pred=1,
                  process=True):
@@ -98,6 +100,8 @@ class LondonBikeDataset(Dataset):
         self.station_id_exclusion = station_id_exclusion
         self.weight_filter = weight_filter
         self.time_id_bounds = time_id_bounds
+        self.t_shuffle = time_shuffle
+        self.t_sample_size = time_sample_size
 
         # Either create files or simply link to existing ones. This slightly convoluted way is required because
         # the total number of processed files is only known after the processing is done. Therefore the
@@ -158,7 +162,11 @@ class LondonBikeDataset(Dataset):
 
             # Create data graphs for each sliding window and store as processed files
             count = 0
-            for data_g_xt, data_g_yt in self._make_time_windows(df, time_id_start, time_id_end):
+            for data_g_xt, data_g_yt in self.generate_time_windows(df,
+                                                                   time_id_start, time_id_end,
+                                                                   shuffle=self.t_shuffle,
+                                                                   sample_size=self.t_sample_size):
+
                 data_graph = Data(x=torch.tensor(data_g_xt, dtype=torch.float),
                                   y=torch.tensor(data_g_yt, dtype=torch.float),
                                   edge_index=edge_index, edge_attr=edge_attr)
@@ -166,10 +174,26 @@ class LondonBikeDataset(Dataset):
                 self._processed_file_names.append('{}_{}.pt'.format(TIME_SLICE_NAME, count))
                 count += 1
 
-    def _make_time_windows(self, df, t_start, t_end):
+    def generate_time_windows(self, df, t_start, t_end, shuffle=False, stride=None, sample_size=None):
+
+        if sample_size is None and shuffle is False:
+            if stride is None:
+                t_val_iter = range(t_start, t_end)
+            else:
+                t_val_iter = range(t_start, t_end, stride)
+
+        elif (not sample_size is None) and shuffle:
+            if stride is None:
+                t_val_iter = np.random.choice(range(t_start, t_end), size=sample_size, replace=False)
+
+            else:
+                raise ValueError('Time windows cannot be generated with both stride and shuffle')
+
+        elif (not sample_size is None) and shuffle is False:
+            raise ValueError('To control sample size without shuffle, set t_start and t_end to appropriate values')
 
         null_list = [0] * self.time_input_number
-        for t_val in range(t_start, t_end):
+        for t_val in t_val_iter:
             df_x = df.loc[(df['time_id'] < t_val + self.time_input_number) & \
                           (df['time_id'] >= t_val)]
             df_y = df.loc[df['time_id'] == t_val + self.time_input_number + self.time_forward_pred - 1]

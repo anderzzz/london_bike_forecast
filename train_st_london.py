@@ -86,7 +86,9 @@ def main(max_epochs, path_model_save, path_model_load,
 if __name__ == '__main__':
 
     dataset_kwargs = {'weight_filter' : 1.0,
-                      'time_id_bounds' : (1488, 2159),
+                      'time_id_bounds' : (1488, 19007),
+                      'time_shuffle' : True,
+                      'time_sample_size' : 1472,
                       'time_interval' : 30,
                       'process' : False,
                       'station_id_exclusion' : EXCLUDE_STATIONS,
