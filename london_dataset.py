@@ -53,6 +53,8 @@ class LondonBikeDataset(Dataset):
             provide their station IDs in a list. Default is no exclusion.
         weight_filter (float, optional): If the edges in the station-to-station graph should be pruned on basis
             of weight, provide the lower bound of weight for edges to keep. Default is no pruning.
+        common_weight_value (float, optional): If the weight of the edges selected by the `weight_filter` should be
+            substituted for a common value, provide common value here. Default is no substitution of weight values.
         time_id_bounds (tuple, optional): If only data for subset of times are to be considered, provide the lower
             and upper bound time indeces as a tuple of two integers. Default is no time slicing.
         time_shuffle (bool, optional): If only a random subset of time slices are to be created, set this to True.
@@ -73,6 +75,7 @@ class LondonBikeDataset(Dataset):
                  dir_name_prefix='bikedata', raw_name_prefix='dataraw', graph_weight_name='graph_weight.csv',
                  transform=None, pre_transform=None,
                  station_id_exclusion=None, weight_filter=None,
+                 common_weight_value=None,
                  time_id_bounds=None, time_shuffle=False, time_sample_size=None,
                  time_interval=30,
                  time_input_number=9, time_forward_pred=1,
@@ -98,6 +101,9 @@ class LondonBikeDataset(Dataset):
         self.time_id_bounds = time_id_bounds
         self.t_shuffle = time_shuffle
         self.t_sample_size = time_sample_size
+
+        # Weight value transformation
+        self.common_weight_value = common_weight_value
 
         # Either create files or simply link to existing ones. This slightly convoluted way is required because
         # the total number of processed files is only known after the processing is done. Therefore the
@@ -254,10 +260,15 @@ class LondonBikeDataset(Dataset):
         station_0 = df3['StartStation Id'].tolist()
         station_1 = df3['EndStation Id'].tolist()
         weight_vals = df3[0].tolist()
+        if not self.common_weight_value is None:
+            weight_vals = list(map(lambda x: self.common_weight_value, weight_vals))
+
+        # Put it all into the tensor
         index = torch.tensor([[self.station_id_2_node_id_map[k] for k in station_0],
                               [self.station_id_2_node_id_map[k] for k in station_1]], dtype=torch.long)
         attr = torch.tensor(weight_vals, dtype=torch.float)
 
+        raise RuntimeError
         return index, attr
 
 def test():
