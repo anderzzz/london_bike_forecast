@@ -13,6 +13,8 @@ import os.path as osp
 import pandas as pd
 import numpy as np
 
+import inspect
+
 '''File prefix for the processed files'''
 TIME_SLICE_NAME = 'time_slice'
 
@@ -26,89 +28,77 @@ class LondonBikeDataset(Dataset):
        and one point a set number of steps into the future is taken, defining the dependent variable for the algorithm.
     3. Each slice is situated in the graph and pickled, such that a DataLoader rapidly can create batches from it.
 
-    The raw data input has to exist in a folder hierarchy with paths as the following format:
-
-    `'{}/{}_{}m/{}_{}m.csv'.format(source_dir, dir_name_prefix, time_interval, raw_name_prefix, time_interval)`
-
     The slicing of the data into input-output pairs for supervised learning can take considerable time (minutes to hours)
     if the range of time indices is wide (1000+). Since the time slices are stored, additional
-    training can be done on the same data without rerunning the workflow above. If `process` is set to `False` the
+    training can be done on the same data without rerunning the workflow above. If `create_from_source` is set to `False` the
     prior data is provided to the DataLoader (or other equivalent method). Note that no validation is done to ensure
-    the data slices are consistent with the initialization parameters. Set `process` to `False` with extreme caution.
+    the data slices are consistent with the initialization parameters. Set `create_from_source` to `False` with caution.
 
     Args:
-        source_dir (str): Path to source directory for input data to process. This folder has to conform to the
-            folder hierarchy defined in class documentation. Typically the data content is created by a prior
-            execution of `rawdata_reformat`
         root_dir (str): Path to directory where to the pickled pre-processed time slices are stored. If `process`
             is `True` the content in this directory is created anew. If `process` is `False` the content in this
             directory is only referenced. The files in this directory are not meant to be moved, read or adjusted.
-        dir_name_prefix (str, optional): Prefix to data directories within the source directory. Default is `bikedata`
-        raw_name_prefix (str, optional): Prefix to the data files within the data directories. Default is `dataraw`
-        graph_weight_name (str, optional): File name to the weighted graph that is stored in the source directory and
+        create_from_source (bool, optional): Flag to determine if the class initialization should create all the time
+            slices from the source or only link to already processed data in the `root_dir`. Default is `True`.
+        source_dir (str, optional): Path to source directory for input data to process. This folder has to conform to the
+            folder hierarchy defined in class documentation. Typically the data content is created by a prior
+            execution of `rawdata_reformat`.
+        source_data_files (str, optional): Either the name of the file with the raw data located in `source_dir`, or
+            a list of names of the files with the raw data located in `source_dir`.
+        source_graph_file (str, optional): File name to the weighted graph that is stored in the source directory and
             which applies to all raw data variants. Default is `graph_weight.csv`
-        transform : No functionality at the moment.
-        pre_transform : No functionality at the moment.
-        station_id_exclusion (list, optional): If certain stations should be entirely excluded from consideration,
+        station_exclusion (list, optional): If certain stations should be entirely excluded from consideration,
             provide their station IDs in a list. Default is no exclusion.
-        weight_filter (float, optional): If the edges in the station-to-station graph should be pruned on basis
+        lower_weight (float, optional): If the edges in the station-to-station graph should be pruned on basis
             of weight, provide the lower bound of weight for edges to keep. Default is no pruning.
-        common_weight_value (float, optional): If the weight of the edges selected by the `weight_filter` should be
-            substituted for a common value, provide common value here. Default is no substitution of weight values.
         time_id_bounds (tuple, optional): If only data for subset of times are to be considered, provide the lower
             and upper bound time indeces as a tuple of two integers. Default is no time slicing.
         time_shuffle (bool, optional): If only a random subset of time slices are to be created, set this to True.
             Default is False.
-        time_sample_size (int, optional): If only a random subset of time slices are to be created, set this to the
+        sample_size (int, optional): If only a random subset of time slices are to be created, set this to the
             size of the random sample. Default is None.
-        time_interval (int, optional): Which data directory to use to create the data set. The data directories are
-            differentiated on the number of minutes per time interval. Default is 30.
-        time_input_number(int, optional): How many contiguous time intervals of data to provide as input, the "x", to
+        stride (int, optional): If only an evenly spaced subetset of time slices are to be created, set this to the
+            stride to iterate through the data. Default is None.
+        ntimes_leading(int, optional): How many contiguous time intervals of data to provide as input, the "x", to
             the model. Value must be compatible with the model architecture. Default 9.
-        time_forward_pred(int, optional): How many time intervals into the future from the most recent given
+        ntimes_forward(int, optional): How many time intervals into the future from the most recent given
             time interval given to the prediction that should be predicted by the model, the "y". Default 1.
-        process (bool, optional): Flag to determine if the class initialization should create all the time slices or
-            only link to already processed data in the `root_dir`. Default is `True`
+        common_weight (float, optional): If the weight of the edges, after optional filtering by `lower_weight, should be
+            substituted for a common value, provide common value here. Default is no substitution of weight values.
 
     '''
-    def __init__(self, source_dir, root_dir,
-                 dir_name_prefix='bikedata', raw_name_prefix='dataraw', graph_weight_name='graph_weight.csv',
-                 transform=None, pre_transform=None,
-                 station_id_exclusion=None, weight_filter=None,
-                 common_weight_value=None,
-                 time_id_bounds=None, time_shuffle=False, time_sample_size=None,
-                 time_interval=30,
-                 time_input_number=9, time_forward_pred=1,
-                 process=True):
+    def __init__(self, root_dir,
+                 create_from_source=True,
+                 source_dir=None, source_data_files=None, source_graph_file='graph_weight.csv',
+                 station_exclusion=None, lower_weight=None,
+                 time_id_bounds=None, time_shuffle=False, sample_size=None, stride=None,
+                 ntimes_leading=9, ntimes_forward=1, common_weight=None):
 
-        # Paths, prefixes and file names
-        self.source_dir = source_dir
         self.root = root_dir
-        self.dir_name_prefix = dir_name_prefix
-        self.raw_name_prefix = raw_name_prefix
-        self.graph_weight_name = graph_weight_name
 
-        # Select subset of raw data on basis of time resolution
-        self.time_interval = time_interval
+        if create_from_source:
+            if any([source_dir, source_data_files, source_graph_file]) is None:
+                raise ValueError('To process the dataset, source directory, source files and source graph file all required')
+        self.source_dir = source_dir
+        self.source_graph_file = source_graph_file
+        if isinstance(source_data_files, str):
+            self.source_data_files = [source_data_files]
 
-        # Time slice: how many inputs, X, and how far into the future from X the predicted value, y, is
-        self.time_input_number = time_input_number
-        self.time_forward_pred = time_forward_pred
+        self.time_input_number = ntimes_leading
+        self.time_forward_pred = ntimes_forward
+        self.common_weight = common_weight
 
-        # Filters
-        self.station_id_exclusion = station_id_exclusion
-        self.weight_filter = weight_filter
+        self.station_exclusion = station_exclusion
+        self.lower_weight = lower_weight
         self.time_id_bounds = time_id_bounds
         self.t_shuffle = time_shuffle
-        self.t_sample_size = time_sample_size
-
-        # Weight value transformation
-        self.common_weight_value = common_weight_value
+        self.sample_size = sample_size
+        self.stride = stride
 
         # Either create files or simply link to existing ones. This slightly convoluted way is required because
         # the total number of processed files is only known after the processing is done. Therefore the
         # process command must be made explicit unlike the template Dataset
-        if process:
+        if create_from_source:
             if not osp.exists(root_dir):
                 makedirs(root_dir)
             else:
@@ -116,14 +106,13 @@ class LondonBikeDataset(Dataset):
                     remove(root_dir + '/' + ff)
             self.create_torch_data()
         else:
-            self._processed_file_names = listdir(root_dir)
+            self._processed_file_names = [fname for fname in listdir(root_dir) if TIME_SLICE_NAME in fname]
 
-        super(LondonBikeDataset, self).__init__(root_dir, transform, pre_transform)
+        super(LondonBikeDataset, self).__init__(root_dir)
 
     @property
     def raw_file_names(self):
-        return ['{}_{}m/{}_{}m.csv'.format(self.dir_name_prefix, self.time_interval,
-                                           self.raw_name_prefix, self.time_interval)]
+        return self.source_data_files
 
     @property
     def processed_file_names(self):
@@ -135,6 +124,21 @@ class LondonBikeDataset(Dataset):
     def get(self, idx):
         data = torch.load(self.root +'/' + TIME_SLICE_NAME + '_{}.pt'.format(idx))
         return data
+
+    def write_creation_params(self, file_name='params.csv', directory=None):
+        '''Write the value of the parameters that can affect the time slices in the root directory to a file.
+
+        '''
+        if directory is None:
+            dir = self.root
+        else:
+            dir = directory
+
+        with open(dir + '/' + file_name, 'w') as fin:
+            for prop_name in ['source_dir', 'source_data_files', 'source_graph_file', 'time_input_number',
+                              'time_forward_pred', 'common_weight', 'station_exclusion', 'lower_weight',
+                              'time_id_bounds', 't_shuffle', 'sample_size', 'stride']:
+                print('{}, "{}"'.format(prop_name, getattr(self, prop_name)), file=fin)
 
     def create_torch_data(self):
         '''Method to construct the time slices given the raw data, and populate the weighted graph,
@@ -148,8 +152,9 @@ class LondonBikeDataset(Dataset):
             df = pd.read_csv(self.source_dir + '/' + raw_file_name)
 
             # Apply filters on data to situate in the graph
-            if not self.station_id_exclusion is None:
-                df = df.loc[~df['station_id'].isin(self.station_id_exclusion)]
+            if not self.station_exclusion is None:
+                df = df.loc[~df['station_id'].isin(self.station_exclusion)]
+
             if not self.time_id_bounds is None:
                 df = df.loc[(df['time_id'] >= self.time_id_bounds[0]) & \
                             (df['time_id'] <= self.time_id_bounds[1])]
@@ -158,44 +163,35 @@ class LondonBikeDataset(Dataset):
             if len(df) == 0:
                 continue
 
-            # The range of sliding window origins for which to produce time-ordered dependent and independent data
-            time_id_start = df['time_id'].min()
-            time_id_end = df['time_id'].max() - self.time_input_number - self.time_forward_pred
+            slice_generator = self._time_windows(df,
+                                                 t_start=df['time_id'].min(),
+                                                 t_end=df['time_id'].max() - self.time_input_number - self.time_forward_pred)
 
-            # Create data graphs for each sliding window and store as processed files
-            count = 0
-            for data_g_xt, data_g_yt in self.generate_time_windows(df,
-                                                                   time_id_start, time_id_end,
-                                                                   shuffle=self.t_shuffle,
-                                                                   sample_size=self.t_sample_size):
-
+            for count, (data_g_xt, data_g_yt) in enumerate(slice_generator):
                 data_graph = Data(x=torch.tensor(data_g_xt, dtype=torch.float),
                                   y=torch.tensor(data_g_yt, dtype=torch.float),
                                   edge_index=edge_index, edge_attr=edge_attr)
 
                 torch.save(data_graph, self.root + '/' + TIME_SLICE_NAME + '_{}.pt'.format(count))
                 self._processed_file_names.append('{}_{}.pt'.format(TIME_SLICE_NAME, count))
-                count += 1
 
-    def generate_time_windows(self, df, t_start, t_end, shuffle=False, stride=None, sample_size=None):
-        '''Generator to extract independent and dependent data for the regressor from the full DataFrame
-        of the specified time slice sizes.
+    def _time_windows(self, df, t_start, t_end):
+        '''Generator to slice data into independent and dependent data
 
         '''
-        if sample_size is None and shuffle is False:
-            if stride is None:
+        if self.sample_size is None and self.t_shuffle is False:
+            if self.stride is None:
                 t_val_iter = range(t_start, t_end)
             else:
-                t_val_iter = range(t_start, t_end, stride)
+                t_val_iter = range(t_start, t_end, self.stride)
 
-        elif (not sample_size is None) and shuffle:
-            if stride is None:
-                t_val_iter = np.random.choice(range(t_start, t_end), size=sample_size, replace=False)
-
+        elif (not self.sample_size is None) and self.t_shuffle:
+            if self.stride is None:
+                t_val_iter = np.random.choice(range(t_start, t_end), size=self.sample_size, replace=False)
             else:
                 raise ValueError('Time windows cannot be generated with both stride and shuffle')
 
-        elif (not sample_size is None) and shuffle is False:
+        elif (not self.sample_size is None) and self.t_shuffle is False:
             raise ValueError('To control sample size without shuffle, set t_start and t_end to appropriate values')
 
         else:
@@ -205,8 +201,7 @@ class LondonBikeDataset(Dataset):
         # current data point
         null_list = [0] * self.time_input_number
         for t_val in t_val_iter:
-            df_x = df.loc[(df['time_id'] < t_val + self.time_input_number) & \
-                          (df['time_id'] >= t_val)]
+            df_x = df.loc[(df['time_id'] < t_val + self.time_input_number) & (df['time_id'] >= t_val)]
             df_y = df.loc[df['time_id'] == t_val + self.time_input_number + self.time_forward_pred - 1]
 
             if len(df_x) == 0 or len(df_y) == 0:
@@ -220,6 +215,7 @@ class LondonBikeDataset(Dataset):
                 ind = self.station_id_2_node_id_map[station_id]
                 data_xt[ind] = [chunk['arrivals'].tolist(),
                                 chunk['departures'].tolist()]
+
             data_yt = [[0, 0]] * len(self.station_id_2_node_id_map)
             for station_id, chunk in df_y.groupby('station_id'):
                 ind = self.station_id_2_node_id_map[station_id]
@@ -228,19 +224,19 @@ class LondonBikeDataset(Dataset):
             yield data_xt, data_yt
 
     def _make_edges(self):
+        '''Convert the graph weight file into edge data compatible with Pytorch geometric conventions
 
-        # Obtain edge data and ensure proper types
-        df_gw = pd.read_csv('{}/{}'.format(self.source_dir, self.graph_weight_name))
+        '''
+        df_gw = pd.read_csv('{}/{}'.format(self.source_dir, self.source_graph_file))
         df_gw['StartStation Id'] = df_gw['StartStation Id'].astype(int)
         df_gw['EndStation Id'] = df_gw['EndStation Id'].astype(int)
         df_gw['weight'] = df_gw['weight'].astype(float)
 
-        # Discard specific stations if exclusion filter provided
-        if not self.station_id_exclusion is None:
-            df_gw = df_gw.loc[~df_gw['StartStation Id'].isin(self.station_id_exclusion)]
-            df_gw = df_gw.loc[~df_gw['EndStation Id'].isin(self.station_id_exclusion)]
+        if not self.station_exclusion is None:
+            df_gw = df_gw.loc[~df_gw['StartStation Id'].isin(self.station_exclusion)]
+            df_gw = df_gw.loc[~df_gw['EndStation Id'].isin(self.station_exclusion)]
 
-        # Create map between station ids and node id.
+        # Create map between station ids and node id, needed because Pytorch geometric reindex nodes
         all_ids = set(df_gw['StartStation Id'].unique()).union(set(df_gw['EndStation Id'].unique()))
         self.node_id_2_station_id_map = dict((n, sid) for n, sid in enumerate(all_ids))
         self.station_id_2_node_id_map = {v: k for k, v in self.node_id_2_station_id_map.items()}
@@ -252,39 +248,35 @@ class LondonBikeDataset(Dataset):
         df3 = pd.concat([df1, df2], axis=1).mean(axis=1)
         df3 = df3.reset_index()
 
-        # Remove edges on basis of weight filter, if any
-        if not self.weight_filter is None:
-            df3 = df3.loc[df3[0] >= self.weight_filter]
+        if not self.lower_weight is None:
+            df3 = df3.loc[df3[0] >= self.lower_weight]
+
+        if not self.common_weight is None:
+            df3[0] = self.common_weight
 
         # Put data in format expected by Pytorch
-        station_0 = df3['StartStation Id'].tolist()
-        station_1 = df3['EndStation Id'].tolist()
-        weight_vals = df3[0].tolist()
-        if not self.common_weight_value is None:
-            weight_vals = list(map(lambda x: self.common_weight_value, weight_vals))
+        index = torch.tensor([[self.station_id_2_node_id_map[k] for k in df3['StartStation Id']],
+                              [self.station_id_2_node_id_map[k] for k in df3['EndStation Id']]], dtype=torch.long)
+        attr = torch.tensor(df3[0].tolist(), dtype=torch.float)
 
-        # Put it all into the tensor
-        index = torch.tensor([[self.station_id_2_node_id_map[k] for k in station_0],
-                              [self.station_id_2_node_id_map[k] for k in station_1]], dtype=torch.long)
-        attr = torch.tensor(weight_vals, dtype=torch.float)
-
-        raise RuntimeError
         return index, attr
 
 def test():
 
-    bike_dataset = LondonBikeDataset('/Users/andersohrn/Development/london_bike_forecast/data_reformat_May21',
-                                     '/Users/andersohrn/PycharmProjects/torch/data_tmp',
-                                     dir_name_prefix='1701_2004',
-                                     weight_filter=0.01,
-                                     time_id_bounds=(100,200),
-                                     time_forward_pred=6,
-                                     process=True)
-    bike_dataset.get(0)
-    bike_dataset.get(30)
-    bike_dataloader = DataLoader(bike_dataset, batch_size=4)
-    for dd in bike_dataloader:
-        print (dd)
+    bike_dataset = LondonBikeDataset(root_dir='/Users/andersohrn/PycharmProjects/torch/data_tmp',
+                                     source_dir='/Users/andersohrn/Development/london_bike_forecast/data_reformat_May21/1701_2004_15m',
+                                     source_data_files='dataraw_15m.csv',
+                                     source_graph_file='graph_weight.csv',
+                                     common_weight=1.0,
+                                     lower_weight=1.0,
+                                     station_exclusion=[10,11,12,13,14,15,16],
+                                     time_id_bounds=(3001,3101))
+    bike_dataset.write_creation_params()
+
+    bike_dataset_2 = LondonBikeDataset(root_dir='/Users/andersohrn/PycharmProjects/torch/data_tmp', process=False)
+
+    for k in DataLoader(bike_dataset_2):
+        print (k)
 
 if __name__ == '__main__':
     test()
