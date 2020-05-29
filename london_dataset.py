@@ -273,7 +273,7 @@ def test():
                                      time_id_bounds=(3001,3101))
     bike_dataset.write_creation_params()
 
-    bike_dataset_2 = LondonBikeDataset(root_dir='/Users/andersohrn/PycharmProjects/torch/data_tmp', process=False)
+    bike_dataset_2 = LondonBikeDataset(root_dir='/Users/andersohrn/PycharmProjects/torch/data_tmp', create_from_source=False)
 
     for k in DataLoader(bike_dataset_2):
         print (k)
