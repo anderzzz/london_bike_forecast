@@ -4,6 +4,7 @@ Written by: Anders Ohrn, May 2020
 
 '''
 from datetime import datetime
+
 import torch
 import torch.nn.functional as F
 from torch_geometric.data import DataLoader
@@ -12,7 +13,7 @@ from multichannel_spatiotemporal import STGCN
 from london_dataset import LondonBikeDataset
 from consts import EXCLUDE_STATIONS
 
-def main(max_epochs, path_model_save, path_model_load,
+def main(max_epochs, path_model_save, path_model_load, update_saved_model_freq,
          dataset_kwargs, dataloader_kwargs, model_kwargs, optimizer_kwargs):
     '''
     Main function to train model on a dataset. Saves the model state to disk as it progresses.
@@ -21,6 +22,7 @@ def main(max_epochs, path_model_save, path_model_load,
         max_epochs (int): Maximum number of epochs in the training
         path_model_save (str): Path to save model. Include up to filename prefix, e.g. `/my_computer/my_dir/file`
         path_model_load (str): Path to model to load state from. If None, state is randomly initialized.
+        update_saved_model_freq (int): How many optimization steps between updates to the saved model.
         dataset_kwargs (dict): Keyworded arguments for the creation of a LondonBikeDataset instance
         dataloader_kwargs (dict): Keyworded arguments for the creation of a PyTorch geometric DataLoader instance
         model_kwargs (dict): Keyworded arguments for the spatio-temporal graph convolutional net model instance
@@ -36,67 +38,62 @@ def main(max_epochs, path_model_save, path_model_load,
         print ('model kwargs:\n {}\n'.format(model_kwargs), file=fout)
         print ('optimizer kwargs:\n {}'.format(optimizer_kwargs), file=fout)
 
-    # Prepare the data set and data loader. Can include processing the files, which can take time
     london_bike_data = LondonBikeDataset(**dataset_kwargs)
     london_bike_loader = DataLoader(london_bike_data, **dataloader_kwargs)
+    if 'create_from_source' in dataset_kwargs:
+        if dataset_kwargs['create_from_source']:
+            london_bike_data.write_creation_params()
 
-    # Initialize model and optimizer
     model = STGCN(n_spatial_dim=london_bike_data[0].num_nodes, **model_kwargs).to(device)
     optimizer = torch.optim.SGD(model.parameters(), **optimizer_kwargs)
 
-    # If a prior trained state is available, populate model and optimizer with saved states
     if not path_model_load is None:
         state = torch.load(path_model_load)
         model.load_state_dict(state['model_state_dict'])
         optimizer.load_state_dict(state['optimizer_state_dict'])
 
-    print ('Start training at {}'.format(datetime.now().isoformat()))
-
     model.train()
     for epoch in range(max_epochs):
-        print ('Epoch: {}'.format(epoch))
+        print ('Epoch {} at {}'.format(epoch, datetime.now().isoformat()))
 
-        k_batch = 0
-        for local_batch in london_bike_loader:
+        for k_batch, local_batch in enumerate(london_bike_loader):
             local_batch = local_batch.to(device)
-            print (local_batch.x.shape)
-
             optimizer.zero_grad()
+
+            print ('Shape of batch {}: {}'. format(k_batch, local_batch.x.shape))
             out = model(local_batch)
-            print ('model for batch {} at {}'.format(k_batch, datetime.now().isoformat()))
+            print ('...model evaluated at {}'.format(datetime.now().isoformat()))
             loss = F.mse_loss(out.y, local_batch.y)
-            print ('loss data {} at {}'.format(loss, datetime.now().isoformat()))
+            print ('...with loss {} at {}'.format(loss, datetime.now().isoformat()))
             loss.backward()
-            print ('loss backward at {}'.format(datetime.now().isoformat()))
+            print ('...gradients done at {}'.format(datetime.now().isoformat()))
             optimizer.step()
-            print ('optimizer step at {}'.format(datetime.now().isoformat()))
+            print ('...optimization step done at {}'.format(datetime.now().isoformat()))
 
-            k_batch += 1
-
-        # This saves model and optimizer states rather than the entire model. This is recommended
-        # in Pytorch documentation. Requires loading to take this into account too
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'loss': loss},
-            path_model_save + '_{}.tar'.format(epoch))
+            if k_batch % update_saved_model_freq == 0:
+                # Save model and optimizer states rather than the entire model.
+                torch.save({'epoch': epoch,
+                            'model_state_dict': model.state_dict(),
+                            'optimizer_state_dict': optimizer.state_dict(),
+                            'loss': loss},
+                            path_model_save + '.tar')
 
 
 if __name__ == '__main__':
 
-    dataset_kwargs = {'weight_filter' : 1.0,
-                      'time_id_bounds' : (1488, 19007),
+    dataset_kwargs = {'lower_weight' : 1.0,
+                      'common_weight' : 1.0,
+                      'time_id_bounds' : (2976, 11614),
                       'time_shuffle' : True,
-                      'time_sample_size' : 1472,
-                      'time_interval' : 30,
-                      'process' : False,
-                      'station_id_exclusion' : EXCLUDE_STATIONS,
-                      'time_input_number' : 9,
-                      'time_forward_pred' : 2,
-                      'dir_name_prefix': '1701_2004',
+                      'sample_size' : 960,
+                      'create_from_source' : True,
+                      'station_exclusion' : EXCLUDE_STATIONS,
+                      'ntimes_leading' : 9,
+                      'ntimes_forward' : 1,
+                      'source_graph_file' : 'graph_weight.csv',
+                      'source_data_files' : 'dataraw_15m.csv',
                       'root_dir' : '/Users/andersohrn/PycharmProjects/torch/data_tmp',
-                      'source_dir' : '/Users/andersohrn/Development/london_bike_forecast/data_reformat_May21'}
+                      'source_dir' : '/Users/andersohrn/Development/london_bike_forecast/data_reformat_May21/1701_2004_15m'}
 
     dataloader_kwargs = {'batch_size' : 64, 'shuffle' : True}
 
@@ -106,11 +103,11 @@ if __name__ == '__main__':
     optimizer_kwargs = {'lr' : 0.01,
                         'momentum' : 0.9}
 
-    max_epochs = 1
+    max_epochs = 2
 
     path_model_save = '/Users/andersohrn/PycharmProjects/torch/model_save/model_save'
     #path_model_load = '/Users/andersohrn/PycharmProjects/torch/model_save/model_store_may24_1.tar'
     path_model_load = None
     main(max_epochs,
-         path_model_save, path_model_load,
+         path_model_save, path_model_load, 3,
          dataset_kwargs, dataloader_kwargs, model_kwargs, optimizer_kwargs)
