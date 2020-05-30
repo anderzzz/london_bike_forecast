@@ -109,6 +109,9 @@ def massage_data_file(file_path, tinterval, interval_size, duration_upper, stati
                           'End Date', 'EndStation Name',
                           'Start Date', 'StartStation Name',
                           'End Date Lower Bound', 'Start Date Lower Bound'])
+    if len(xx) == 0:
+        raise RuntimeError('Time interval missing indices for file {}'.format(file_path))
+
     g_arrival = xx.groupby(by=['EndStation Id', 'End Date ID'])
     df_arrival = g_arrival.size()
     g_departure = xx.groupby(by=['StartStation Id', 'Start Date ID'])
@@ -181,6 +184,8 @@ def merge_data(file_name_root, max_file_index, file_name_save='data_file'):
     df_all = add_zeros(df_all, 0.98)
     df_all.to_csv(file_name_save, index=False)
 
+    return list(df_all['station_id'].unique())
+
 def add_zeros(df, station_occ_min_frac=0.0):
     '''On rare occassions stations are off-line for a week or more. The long stretches of missing data is absent,
     but can through this function be replaced with zeros. However, stations that lack data for very long stretches
@@ -200,22 +205,22 @@ def add_zeros(df, station_occ_min_frac=0.0):
     station_occ_max = station_occ['departures'].max()
     station_occ_min = station_occ_max * station_occ_min_frac
     station_id_above = station_occ.loc[station_occ['departures'] >= station_occ_min].index
-    df = df.loc[df['station_id'].isin(station_id_above.to_list())]
+    df = df.loc[station_id_above]
 
     time_id_all = df.groupby('time_id').count().index
     mind_full = pd.MultiIndex.from_product([station_id_above, time_id_all])
 
-    df = df.set_index(['station_id','time_id'])
     df = df.reindex(mind_full, fill_value=0)
     df = df.reset_index().sort_values(by=['time_id','station_id'])
 
     return df
 
-def make_graph_weights(graphs, norm='median', kwargs_norm={}):
+def make_graph_weights(graphs, stations_include, norm='median', kwargs_norm={}):
     '''Compute average edge weights for a plurality of weighted and directed graphs
 
     Args:
         graphs (list): Collection of Series indexed on pairs of station Id with non-zero occurrence in associated raw data
+        stations_include (list) : List of stations that are to be included
         norm (str, numeric, optional): How to normalize weights. If string it should be a method of a Pandas
                                        DataFrame that returns a single numeric value. If a numeric value, it is used
                                        to divide all values with.
@@ -228,19 +233,24 @@ def make_graph_weights(graphs, norm='median', kwargs_norm={}):
     for graph in graphs[1:]:
         mega_index = mega_index.union(graph.index)
     g_expand = [g.reindex(mega_index, fill_value=0) for g in graphs]
-    cat_graph = pd.concat(g_expand)
+    cat_graph = pd.concat(g_expand).reset_index()
+
+    cat_graph = cat_graph.loc[cat_graph['StartStation Id'].isin(stations_include)]
+    cat_graph = cat_graph.loc[cat_graph['EndStation Id'].isin(stations_include)]
 
     cat_graph_all = cat_graph.groupby(['StartStation Id','EndStation Id']).sum()
+    cat_graph_all = cat_graph_all.rename(columns={0 : 'total'})
 
-    if not norm is None:
-        if isinstance(norm, str):
-            norm_val = getattr(cat_graph_all, norm)(**kwargs_norm)
-        elif isinstance(norm, (int, float, complex)):
-            norm_val = norm
+    cat_graph_all['median_norm'] = cat_graph_all['total'] * (1.0 / cat_graph_all['total'].median())
 
-        cat_graph_all = (1.0 / norm_val) * cat_graph_all
+    all_df = []
+    for s_ind, df_slice in cat_graph_all.groupby('StartStation Id'):
+        mean_slice = df_slice['total'].sum()
+        df_slice.loc[:, 'percent_flow'] = 100.0 * df_slice['total'] / mean_slice
+        all_df.append(df_slice)
+    cat_graph_all = pd.concat(all_df)
 
-    return pd.DataFrame(cat_graph_all, columns=['weight'])
+    return cat_graph_all
 
 def main(raw_data_file_paths, time_interval_size, lower_t_bound, upper_t_bound,
          duration_upper, stations_exclude, out_filename, station_filename):
@@ -262,12 +272,12 @@ def main(raw_data_file_paths, time_interval_size, lower_t_bound, upper_t_bound,
         spatiotemp_.to_csv('data_reformat_{}.csv'.format(k))
         graphs.append(graph_weights)
 
-    # Put together the graph weight data
-    df_graph_all = make_graph_weights(graphs)
-    df_graph_all.to_csv('graph_weight.csv')
-
     # Deal with duplicate indices in adjacent files
-    merge_data('data_reformat', k + 1, out_filename)
+    stations_include = merge_data('data_reformat', k + 1, out_filename)
+
+    # Put together the graph weight data
+    df_graph_all = make_graph_weights(graphs, stations_include)
+    df_graph_all.to_csv('graph_weight.csv')
 
 if __name__ == '__main__':
 
@@ -276,7 +286,7 @@ if __name__ == '__main__':
     fps = ['/Users/andersohrn/Development/london_bike_forecast/data/recent/{}'.format(fp) for fp in files]
 
     # Number of minutes of a time interval
-    INTERVAL = 60
+    INTERVAL = 15
 
     # Name of data output file
     OUTFILENAME='data.csv'
