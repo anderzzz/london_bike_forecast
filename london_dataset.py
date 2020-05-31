@@ -13,7 +13,7 @@ import os.path as osp
 import pandas as pd
 import numpy as np
 
-import inspect
+from consts import EXCLUDE_STATIONS
 
 '''File prefix for the processed files'''
 TIME_SLICE_NAME = 'time_slice'
@@ -49,6 +49,8 @@ class LondonBikeDataset(Dataset):
             which applies to all raw data variants. Default is `graph_weight.csv`
         station_exclusion (list, optional): If certain stations should be entirely excluded from consideration,
             provide their station IDs in a list. Default is no exclusion.
+        weight_type (str, optional): The type of graph weight on which to base filtering. Options governed by the
+            `rawdata_reformat` and includes `percent_flow`, `median_norm` and `total`.
         lower_weight (float, optional): If the edges in the station-to-station graph should be pruned on basis
             of weight, provide the lower bound of weight for edges to keep. Default is no pruning.
         time_id_bounds (tuple, optional): If only data for subset of times are to be considered, provide the lower
@@ -64,13 +66,15 @@ class LondonBikeDataset(Dataset):
         ntimes_forward(int, optional): How many time intervals into the future from the most recent given
             time interval given to the prediction that should be predicted by the model, the "y". Default 1.
         common_weight (float, optional): If the weight of the edges, after optional filtering by `lower_weight, should be
-            substituted for a common value, provide common value here. Default is no substitution of weight values.
+            substituted for a common value, provide common value here. Note that if the common weight is set to 1.0,
+            the weight matrix will be functionality identical to providing no weight matrix, only adjacency matrix, to
+            the Pytorch geometric graph convolution methods. Default is no substitution of weight values.
 
     '''
     def __init__(self, root_dir,
                  create_from_source=True,
                  source_dir=None, source_data_files=None, source_graph_file='graph_weight.csv',
-                 station_exclusion=None, lower_weight=None,
+                 station_exclusion=None, weight_type=None, lower_weight=None,
                  time_id_bounds=None, time_shuffle=False, sample_size=None, stride=None,
                  ntimes_leading=9, ntimes_forward=1, common_weight=None):
 
@@ -89,6 +93,7 @@ class LondonBikeDataset(Dataset):
         self.common_weight = common_weight
 
         self.station_exclusion = station_exclusion
+        self.weight_type = weight_type
         self.lower_weight = lower_weight
         self.time_id_bounds = time_id_bounds
         self.t_shuffle = time_shuffle
@@ -230,7 +235,8 @@ class LondonBikeDataset(Dataset):
         df_gw = pd.read_csv('{}/{}'.format(self.source_dir, self.source_graph_file))
         df_gw['StartStation Id'] = df_gw['StartStation Id'].astype(int)
         df_gw['EndStation Id'] = df_gw['EndStation Id'].astype(int)
-        df_gw['weight'] = df_gw['weight'].astype(float)
+        df_gw['weight'] = df_gw[self.weight_type].astype(float)
+       # df_gw['weight'] = df_gw['weight'].astype(float)
 
         if not self.station_exclusion is None:
             df_gw = df_gw.loc[~df_gw['StartStation Id'].isin(self.station_exclusion)]
@@ -263,14 +269,15 @@ class LondonBikeDataset(Dataset):
 
 def test():
 
-    bike_dataset = LondonBikeDataset(root_dir='/Users/andersohrn/PycharmProjects/torch/data_tmp',
+    bike_dataset = LondonBikeDataset(root_dir='/Users/andersohrn/PycharmProjects/torch/data_15m_1percent',
                                      source_dir='/Users/andersohrn/Development/london_bike_forecast/data_reformat_May21/1701_2004_15m',
                                      source_data_files='dataraw_15m.csv',
                                      source_graph_file='graph_weight.csv',
                                      common_weight=1.0,
                                      lower_weight=1.0,
-                                     station_exclusion=[10,11,12,13,14,15,16],
-                                     time_id_bounds=(3001,3101))
+                                     weight_type='percent_flow',
+                                     station_exclusion=EXCLUDE_STATIONS,
+                                     time_id_bounds=(2975, 38015))
     bike_dataset.write_creation_params()
 
     bike_dataset_2 = LondonBikeDataset(root_dir='/Users/andersohrn/PycharmProjects/torch/data_tmp', create_from_source=False)
