@@ -73,6 +73,7 @@ def main(max_epochs, path_model_save, path_model_load, update_saved_model_freq,
             if k_batch % update_saved_model_freq == 0:
                 # Save model and optimizer states rather than the entire model.
                 torch.save({'epoch': epoch,
+                            'k_batch': k_batch,
                             'model_state_dict': model.state_dict(),
                             'optimizer_state_dict': optimizer.state_dict(),
                             'loss': loss},
@@ -83,7 +84,7 @@ if __name__ == '__main__':
 
     dataset_kwargs = {'lower_weight' : 1.0,
                       'common_weight' : 1.0,
-                      'time_id_bounds' : (2976, 11614),
+                      'time_id_bounds' : (2976, 38015),
                       'time_shuffle' : True,
                       'sample_size' : 960,
                       'create_from_source' : True,
