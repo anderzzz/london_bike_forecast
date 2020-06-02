@@ -28,41 +28,43 @@ def main(path_model_load, dataset_kwargs, dataloader_kwargs, model_kwargs):
     # process set to False will reuse already processed files. The meaning of the processed files are
     # currently a manual process, which I could automate later, so use process=True unless you are
     # really sure what you are doing
-    london_bike_data = LondonBikeDataset(process=True,
-                                         **dataset_kwargs)
+    london_bike_data = LondonBikeDataset(**dataset_kwargs)
     london_bike_loader = DataLoader(london_bike_data, **dataloader_kwargs)
 
     # Initialize model and load state
     model = STGCN(n_spatial_dim=london_bike_data[0].num_nodes, **model_kwargs).to(device)
     state = torch.load(path_model_load)
     model.load_state_dict(state['model_state_dict'])
-
     model.eval()
 
-    for local_batch in london_bike_loader:
-        local_batch = local_batch.to(device)
-        print(local_batch.x.shape)
-        out = model(local_batch)
-        print (out)
+    s_ind = london_bike_data.station_id_2_node_id_map[14]
 
-        raise RuntimeError
+    for nn, local_batch in enumerate(london_bike_loader):
+        local_batch = local_batch.to(device)
+        out = model(local_batch)
+        print (nn, out.y[s_ind], local_batch.y[s_ind])
+
 
 if __name__ == '__main__':
 
-    dataset_kwargs = {'weight_filter' : 1.0,
-                      'time_id_bounds' : (100, 3000),
-                      'time_interval' : 30,
-                      'station_id_exclusion' : EXCLUDE_STATIONS,
-                      'years' : [2017],
-                      'time_input_number' : 9,
-                      'time_forward_pred' : 2,
-                      'name_prefix': 'data',
-                      'root_dir' : '/Users/andersohrn/PycharmProjects/torch/data_tmp_test',
-                      'source_dir' : '/Users/andersohrn/Development/london_bike_forecast/data_preprocessed'}
+    dataset_kwargs = {'root_dir' : '/Users/andersohrn/PycharmProjects/torch/data_tmp',
+                      'source_dir' : '/Users/andersohrn/Development/london_bike_forecast/data_reformat_May21/1701_2004_15m',
+                      'source_data_files' : 'dataraw_15m.csv',
+                      'source_graph_file' : 'graph_weight.csv',
+                      'weight_type' : 'percent_flow',
+                      'common_weight' : 1.0,
+                      'lower_weight' : 1.0,
+                      'time_shuffle' : False,
+                      'create_from_source' : True,
+                      'ntimes_leading' : 9,
+                      'ntimes_forward' : 1,
+                      'station_exclusion' : EXCLUDE_STATIONS,
+                      'time_id_bounds' : (5951, 6047)}
 
-    dataloader_kwargs = {'batch_size' : 50, 'shuffle' : True}
+    dataloader_kwargs = {'batch_size' : 1, 'shuffle' : False}
 
     model_kwargs = {'n_temporal_dim' : 9, 'n_input_channels' : 2,
                     'co_temporal' :64, 'co_spatial' :16, 'time_conv_length' : 3}
 
-    main(FOOBAR)
+    main(path_model_load='/Users/andersohrn/PycharmProjects/torch/model_save_15min_1forward_1percent/model_save.tar',
+         dataset_kwargs=dataset_kwargs, dataloader_kwargs=dataloader_kwargs, model_kwargs=model_kwargs)
