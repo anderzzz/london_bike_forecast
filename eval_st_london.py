@@ -3,6 +3,7 @@
 Written by: Anders Ohrn, May 2020
 
 '''
+import pandas as pd
 import torch
 
 from torch_geometric.data import DataLoader
@@ -11,7 +12,30 @@ from multichannel_spatiotemporal import STGCN
 from london_dataset import LondonBikeDataset
 from consts import EXCLUDE_STATIONS
 
-def main(path_model_load, dataset_kwargs, dataloader_kwargs, model_kwargs):
+def make_viz_stations(model, data_loader, viz_stations, station2id):
+
+    inds = [station2id[k] for k in viz_stations]
+    inds_slicer = [[ind * 2, ind *2 + 1] for ind in inds]
+    inds_slicer = torch.tensor(inds_slicer).flatten()
+    totals_predict = []
+    totals_actual = []
+    for n_time, data in enumerate(data_loader):
+        predict = model(data).y
+        actual = data.y
+        v_predict = torch.take(predict, inds_slicer)
+        v_actual = torch.take(actual, inds_slicer)
+        totals_predict.extend(list(v_predict))
+        totals_actual.extend(list(v_actual))
+
+    mind = pd.MultiIndex.from_product([['arrivals', 'departures'], range(n_time + 1), viz_stations],
+                                      names=['event_type', 'local_time_id', 'station_id'])
+    df_1 = pd.DataFrame(totals_actual, index=mind, columns=['actual_count'])
+    df_2 = pd.DataFrame(totals_predict, index=mind, columns=['predicted_count'])
+    df = df_1.join(df_2)
+    print (df)
+
+def main(path_model_load, dataset_kwargs, dataloader_kwargs, model_kwargs,
+         viz_stations=None):
     '''
     Main function to evaluate model on a dataset.
 
@@ -37,12 +61,8 @@ def main(path_model_load, dataset_kwargs, dataloader_kwargs, model_kwargs):
     model.load_state_dict(state['model_state_dict'])
     model.eval()
 
-    s_ind = london_bike_data.station_id_2_node_id_map[14]
-
-    for nn, local_batch in enumerate(london_bike_loader):
-        local_batch = local_batch.to(device)
-        out = model(local_batch)
-        print (nn, out.y[s_ind], local_batch.y[s_ind])
+    if not viz_stations is None:
+        make_viz_stations(model, london_bike_loader, viz_stations, london_bike_data.station_id_2_node_id_map)
 
 
 if __name__ == '__main__':
@@ -57,7 +77,7 @@ if __name__ == '__main__':
                       'time_shuffle' : False,
                       'create_from_source' : True,
                       'ntimes_leading' : 9,
-                      'ntimes_forward' : 1,
+                      'ntimes_forward' : 4,
                       'station_exclusion' : EXCLUDE_STATIONS,
                       'time_id_bounds' : (5951, 6047)}
 
@@ -66,5 +86,6 @@ if __name__ == '__main__':
     model_kwargs = {'n_temporal_dim' : 9, 'n_input_channels' : 2,
                     'co_temporal' :64, 'co_spatial' :16, 'time_conv_length' : 3}
 
-    main(path_model_load='/Users/andersohrn/PycharmProjects/torch/model_save_15min_1forward_1percent/model_save.tar',
-         dataset_kwargs=dataset_kwargs, dataloader_kwargs=dataloader_kwargs, model_kwargs=model_kwargs)
+    main(path_model_load='/Users/andersohrn/PycharmProjects/torch/model_save_15min_4forward_1percent/model_save.tar',
+         dataset_kwargs=dataset_kwargs, dataloader_kwargs=dataloader_kwargs, model_kwargs=model_kwargs,
+         viz_stations=[14, 34, 593])
