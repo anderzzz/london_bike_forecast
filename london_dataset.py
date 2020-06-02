@@ -142,7 +142,7 @@ class LondonBikeDataset(Dataset):
         with open(dir + '/' + file_name, 'w') as fin:
             for prop_name in ['source_dir', 'source_data_files', 'source_graph_file', 'time_input_number',
                               'time_forward_pred', 'common_weight', 'station_exclusion', 'lower_weight',
-                              'time_id_bounds', 't_shuffle', 'sample_size', 'stride']:
+                              'time_id_bounds', 't_shuffle', 'sample_size', 'stride', 'weight_type']:
                 print('{}, "{}"'.format(prop_name, getattr(self, prop_name)), file=fin)
 
     def create_torch_data(self):
@@ -236,7 +236,7 @@ class LondonBikeDataset(Dataset):
         df_gw['StartStation Id'] = df_gw['StartStation Id'].astype(int)
         df_gw['EndStation Id'] = df_gw['EndStation Id'].astype(int)
         df_gw['weight'] = df_gw[self.weight_type].astype(float)
-       # df_gw['weight'] = df_gw['weight'].astype(float)
+        df_gw = df_gw[['StartStation Id', 'EndStation Id', 'weight']]
 
         if not self.station_exclusion is None:
             df_gw = df_gw.loc[~df_gw['StartStation Id'].isin(self.station_exclusion)]
@@ -269,21 +269,26 @@ class LondonBikeDataset(Dataset):
 
 def test():
 
-    bike_dataset = LondonBikeDataset(root_dir='/Users/andersohrn/PycharmProjects/torch/data_15m_1percent',
+    bike_dataset = LondonBikeDataset(root_dir='/Users/andersohrn/PycharmProjects/torch/data_15m_4forward_1percent',
                                      source_dir='/Users/andersohrn/Development/london_bike_forecast/data_reformat_May21/1701_2004_15m',
                                      source_data_files='dataraw_15m.csv',
                                      source_graph_file='graph_weight.csv',
+                                     weight_type='percent_flow',
                                      common_weight=1.0,
                                      lower_weight=1.0,
-                                     weight_type='percent_flow',
+                                     time_shuffle=True,
+                                     sample_size=5888,
+                                     create_from_source=True,
+                                     ntimes_leading=9,
+                                     ntimes_forward=4,
                                      station_exclusion=EXCLUDE_STATIONS,
-                                     time_id_bounds=(2975, 38015))
+                                     time_id_bounds=(2976, 38015))
     bike_dataset.write_creation_params()
 
-    bike_dataset_2 = LondonBikeDataset(root_dir='/Users/andersohrn/PycharmProjects/torch/data_tmp', create_from_source=False)
-
-    for k in DataLoader(bike_dataset_2):
-        print (k)
+#    bike_dataset_2 = LondonBikeDataset(root_dir='/Users/andersohrn/PycharmProjects/torch/data_15m_1percent', create_from_source=False)
+#
+#    for k in DataLoader(bike_dataset_2):
+#        print (k)
 
 if __name__ == '__main__':
     test()
