@@ -12,6 +12,7 @@ from os import listdir, makedirs, remove
 import os.path as osp
 import pandas as pd
 import numpy as np
+from numpy.random import Generator, PCG64
 
 from consts import EXCLUDE_STATIONS
 
@@ -69,6 +70,7 @@ class LondonBikeDataset(Dataset):
             substituted for a common value, provide common value here. Note that if the common weight is set to 1.0,
             the weight matrix will be functionality identical to providing no weight matrix, only adjacency matrix, to
             the Pytorch geometric graph convolution methods. Default is no substitution of weight values.
+        seed (int, optional): Random seed for random number generator if time shuffle applies. Default no hard-coded seed.
 
     '''
     def __init__(self, root_dir,
@@ -76,7 +78,7 @@ class LondonBikeDataset(Dataset):
                  source_dir=None, source_data_files=None, source_graph_file='graph_weight.csv',
                  station_exclusion=None, weight_type=None, lower_weight=None,
                  time_id_bounds=None, time_shuffle=False, sample_size=None, stride=None,
-                 ntimes_leading=9, ntimes_forward=1, common_weight=None):
+                 ntimes_leading=9, ntimes_forward=1, common_weight=None, seed=None):
 
         self.root = root_dir
 
@@ -99,6 +101,11 @@ class LondonBikeDataset(Dataset):
         self.t_shuffle = time_shuffle
         self.sample_size = sample_size
         self.stride = stride
+
+        if seed is None:
+            self.rg = Generator(PCG64())
+        else:
+            self.rg = Generator(PCG64(seed))
 
         # Either create files or simply link to existing ones. This slightly convoluted way is required because
         # the total number of processed files is only known after the processing is done. Therefore the
@@ -142,7 +149,7 @@ class LondonBikeDataset(Dataset):
         with open(dir + '/' + file_name, 'w') as fin:
             for prop_name in ['source_dir', 'source_data_files', 'source_graph_file', 'time_input_number',
                               'time_forward_pred', 'common_weight', 'station_exclusion', 'lower_weight',
-                              'time_id_bounds', 't_shuffle', 'sample_size', 'stride', 'weight_type']:
+                              'time_id_bounds', 't_shuffle', 'sample_size', 'stride', 'weight_type', 'rg']:
                 print('{}, "{}"'.format(prop_name, getattr(self, prop_name)), file=fin)
 
     def create_torch_data(self):
@@ -192,7 +199,7 @@ class LondonBikeDataset(Dataset):
 
         elif (not self.sample_size is None) and self.t_shuffle:
             if self.stride is None:
-                t_val_iter = np.random.choice(range(t_start, t_end), size=self.sample_size, replace=False)
+                t_val_iter = self.rg.choice(range(t_start, t_end), size=self.sample_size, replace=False)
             else:
                 raise ValueError('Time windows cannot be generated with both stride and shuffle')
 
@@ -269,20 +276,21 @@ class LondonBikeDataset(Dataset):
 
 def test():
 
-    bike_dataset = LondonBikeDataset(root_dir='/Users/andersohrn/PycharmProjects/torch/data_15m_4forward_1percent',
+    bike_dataset = LondonBikeDataset(root_dir='/Users/andersohrn/PycharmProjects/torch/data_15m_4forward_05percent_2018',
                                      source_dir='/Users/andersohrn/Development/london_bike_forecast/data_reformat_May21/1701_2004_15m',
                                      source_data_files='dataraw_15m.csv',
                                      source_graph_file='graph_weight.csv',
                                      weight_type='percent_flow',
                                      common_weight=1.0,
-                                     lower_weight=1.0,
+                                     lower_weight=0.5,
                                      time_shuffle=True,
                                      sample_size=5888,
                                      create_from_source=True,
                                      ntimes_leading=9,
                                      ntimes_forward=4,
                                      station_exclusion=EXCLUDE_STATIONS,
-                                     time_id_bounds=(2976, 38015))
+                                     time_id_bounds=(38016, 73055),
+                                     seed=810828)
     bike_dataset.write_creation_params()
 
 #    bike_dataset_2 = LondonBikeDataset(root_dir='/Users/andersohrn/PycharmProjects/torch/data_15m_1percent', create_from_source=False)
