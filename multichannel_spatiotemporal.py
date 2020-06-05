@@ -9,7 +9,7 @@ Written by Anders Ohrn, May 2020
 '''
 import torch
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv
+from torch_geometric.nn import GCNConv, TAGConv
 
 from torch_geometric.data import Data
 
@@ -97,13 +97,24 @@ class SpatialGraphConv(SpatioTemporal):
             n_temporal (int): Number of contiguous temporal units per spatial unit
             channel_inputs (int): Number of channels of input per node
             channel_outputs (int): Number of channels of output per node
+            graph_conv_type (str): Type of graph convolution to use. Supported types are 'GCNConv' and 'TAGConv'
+            graph_conv_kwargs (dict): Keyword arguments in addition to the input and output channel data to the
+                graph convolution class
 
     '''
-    def __init__(self, n_spatial, n_temporal, channel_inputs, channel_outputs):
+    def __init__(self, n_spatial, n_temporal, channel_inputs, channel_outputs,
+                 graph_conv_type, graph_conv_kwargs):
 
         super(SpatialGraphConv, self).__init__(n_spatial, n_temporal, channel_inputs, channel_outputs)
 
-        self.gcn = GCNConv(self.channel_inputs, self.channel_outputs)
+        if graph_conv_type == 'GCNConv':
+            self.gcn = GCNConv(self.channel_inputs, self.channel_outputs)
+
+        elif graph_conv_type == 'TAGConv':
+            self.gcn = TAGConv(self.channel_inputs, self.channel_outputs, **graph_conv_kwargs)
+
+        else:
+            raise ValueError('Unknown graph convolution type encountered: {}'.format(graph_conv_type))
 
     def forward(self, data):
 
@@ -135,7 +146,8 @@ class STGCN(torch.nn.Module):
 
     '''
     def __init__(self, n_temporal_dim, n_spatial_dim, n_input_channels,
-                 co_temporal=64, co_spatial=16, time_conv_length=3):
+                 co_temporal=64, co_spatial=16, time_conv_length=3,
+                 graph_conv_type='GCNConv', graph_conv_kwargs={}):
 
         super(STGCN, self).__init__()
 
@@ -155,7 +167,9 @@ class STGCN(torch.nn.Module):
                                         time_convolution_length=time_conv_length)
         self.model_s_1 = SpatialGraphConv(n_spatial_dim, n_temporal_dim - time_conv_length + 1,
                                           channel_inputs=co_temporal,
-                                          channel_outputs=co_spatial)
+                                          channel_outputs=co_spatial,
+                                          graph_conv_type=graph_conv_type,
+                                          graph_conv_kwargs=graph_conv_kwargs)
         self.model_t_1b = Time1dConvGLU(n_spatial_dim, n_temporal_dim - time_conv_length + 1,
                                         channel_inputs=co_spatial,
                                         channel_outputs=co_temporal,
@@ -168,7 +182,9 @@ class STGCN(torch.nn.Module):
                                         time_convolution_length=time_conv_length)
         self.model_s_2 = SpatialGraphConv(n_spatial_dim, n_temporal_dim - 3 * time_conv_length + 3,
                                           channel_inputs=co_temporal,
-                                          channel_outputs=co_spatial)
+                                          channel_outputs=co_spatial,
+                                          graph_conv_type=graph_conv_type,
+                                          graph_conv_kwargs=graph_conv_kwargs)
         self.model_t_2b = Time1dConvGLU(n_spatial_dim, n_temporal_dim - 3 * time_conv_length + 3,
                                         channel_inputs=co_spatial,
                                         channel_outputs=co_temporal,
@@ -263,6 +279,11 @@ def main():
     stgcn = STGCN(9, 5, 2)
     print (count_parameters(stgcn.model_output))
     out = stgcn.forward(data_step_0)
+    print (out)
+
+    stgcn2 = STGCN(9, 5, 2, graph_conv_type='TAGConv', graph_conv_kwargs={'K' : 2})
+    print (count_parameters(stgcn2.model_output))
+    out = stgcn2.forward(data_step_0)
     print (out)
 
 if __name__ == '__main__':
