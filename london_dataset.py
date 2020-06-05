@@ -54,6 +54,7 @@ class LondonBikeDataset(Dataset):
             `rawdata_reformat` and includes `percent_flow`, `median_norm` and `total`.
         lower_weight (float, optional): If the edges in the station-to-station graph should be pruned on basis
             of weight, provide the lower bound of weight for edges to keep. Default is no pruning.
+        symmetric (bool, optional): TBD
         time_id_bounds (tuple, optional): If only data for subset of times are to be considered, provide the lower
             and upper bound time indeces as a tuple of two integers. Default is no time slicing.
         time_shuffle (bool, optional): If only a random subset of time slices are to be created, set this to True.
@@ -76,7 +77,7 @@ class LondonBikeDataset(Dataset):
     def __init__(self, root_dir,
                  create_from_source=True,
                  source_dir=None, source_data_files=None, source_graph_file='graph_weight.csv',
-                 station_exclusion=None, weight_type=None, lower_weight=None,
+                 station_exclusion=None, weight_type=None, lower_weight=None, symmetric=True,
                  time_id_bounds=None, time_shuffle=False, sample_size=None, stride=None,
                  ntimes_leading=9, ntimes_forward=1, common_weight=None, seed=None):
 
@@ -97,6 +98,7 @@ class LondonBikeDataset(Dataset):
         self.station_exclusion = station_exclusion
         self.weight_type = weight_type
         self.lower_weight = lower_weight
+        self.symmetric = symmetric
         self.time_id_bounds = time_id_bounds
         self.t_shuffle = time_shuffle
         self.sample_size = sample_size
@@ -255,41 +257,47 @@ class LondonBikeDataset(Dataset):
         self.station_id_2_node_id_map = {v: k for k, v in self.node_id_2_station_id_map.items()}
 
         # Make graph non-directional with averaged weights and without self-loops
-        df1 = df_gw.loc[df_gw['StartStation Id'] != df_gw['EndStation Id']].set_index(['StartStation Id', 'EndStation Id'])
-        df2 = df1.reorder_levels(['EndStation Id', 'StartStation Id'])
-        df2 = df2.reindex(df1.index, fill_value=0.0)
-        df3 = pd.concat([df1, df2], axis=1).mean(axis=1)
-        df3 = df3.reset_index()
+        if self.symmetric:
+            df1 = df_gw.loc[df_gw['StartStation Id'] != df_gw['EndStation Id']].set_index(['StartStation Id', 'EndStation Id'])
+            df2 = df1.reorder_levels(['EndStation Id', 'StartStation Id'])
+            df2 = df2.reindex(df1.index, fill_value=0.0)
+            df3 = pd.concat([df1, df2], axis=1).mean(axis=1)
+            df3 = df3.reset_index()
+            df3 = df3.rename(columns={0 : 'weight'})
+        else:
+            df3 = df_gw
 
         if not self.lower_weight is None:
-            df3 = df3.loc[df3[0] >= self.lower_weight]
+            df3 = df3.loc[df3['weight'] >= self.lower_weight]
 
         if not self.common_weight is None:
-            df3[0] = self.common_weight
+            df3['weight'] = self.common_weight
 
         # Put data in format expected by Pytorch
         index = torch.tensor([[self.station_id_2_node_id_map[k] for k in df3['StartStation Id']],
                               [self.station_id_2_node_id_map[k] for k in df3['EndStation Id']]], dtype=torch.long)
-        attr = torch.tensor(df3[0].tolist(), dtype=torch.float)
+        attr = torch.tensor(df3['weight'].tolist(), dtype=torch.float)
 
         return index, attr
 
 def test():
 
-    bike_dataset = LondonBikeDataset(root_dir='/Users/andersohrn/PycharmProjects/torch/data_15m_4forward_05percent_2018',
+    bike_dataset = LondonBikeDataset(root_dir='/Users/andersohrn/PycharmProjects/torch/data_15m_4forward_all_asymw',
                                      source_dir='/Users/andersohrn/Development/london_bike_forecast/data_reformat_May21/1701_2004_15m',
                                      source_data_files='dataraw_15m.csv',
                                      source_graph_file='graph_weight.csv',
                                      weight_type='percent_flow',
-                                     common_weight=1.0,
-                                     lower_weight=0.5,
+                                     common_weight=None,
+                                     lower_weight=None,
+                                     symmetric=False,
                                      time_shuffle=True,
                                      sample_size=5888,
                                      create_from_source=True,
                                      ntimes_leading=9,
                                      ntimes_forward=4,
                                      station_exclusion=EXCLUDE_STATIONS,
-                                     time_id_bounds=(38016, 73055),
+                                     time_id_bounds=(2976, 38015),
+                                     #time_id_bounds=(38016, 73055),
                                      seed=810828)
     bike_dataset.write_creation_params()
 
